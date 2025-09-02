@@ -17,8 +17,37 @@ GOODBYES_EN = {"quit", "bye", "goodbye"}
 GOODBYES_SV = {"slut", "hejdå", "adjö"}
 QUIT_WORDS = GOODBYES_EN | GOODBYES_SV
 
-FAREWELLS_EN = ["Goodbye!", "Bye!", "See you!"]
-FAREWELLS_SV = ["Hejdå!", "Adjö!", "Vi ses!"]
+FAREWELLS_EN = [
+    "Goodbye!",
+    "Bye!",
+    "See you!",
+    "Take care of yourself!",
+    "See you later, have a great day!",
+    "Catch you soon, don’t be a stranger!",
+    "Farewell, until we meet again!",
+    "Later, hope everything goes well for you!",
+    "Don’t do anything I wouldn’t do!",
+    "Logging off like a true 90s modem… goodbye!",
+    "May the Wi-Fi be with you!",
+    "See you in another timeline!",
+    "Vanishing dramatically… poof!"
+]
+
+FAREWELLS_SV = [
+    "Hejdå!",
+    "Adjö!",
+    "Vi ses!",
+    "Ha det bra och ta hand om dig!",
+    "Vi hörs senare, ha en fin dag!",
+    "På återseende, hoppas allt går bra för dig!",
+    "Ses snart, glöm inte att höra av dig!",
+    "Ha det gott tills vi ses igen!",
+    "Gör inget jag inte skulle göra!",
+    "Loggar ut som ett gammalt ICQ-konto… hej då!",
+    "Må Wi-fi:et vara med dig!",
+    "Vi ses i nästa liv!",
+    "Försvinner mystiskt i dimman… poff!"
+]
 
 def has_swedish_markers(text_lower):
     if any(ch in text_lower for ch in "åäö"):
@@ -629,8 +658,7 @@ def lang_to_bcp47(active_language):
     return "sv-SE" if active_language == "sv" else "en-US"
 
 def main():
-    print("Hello / Hej! Hold SPACE to talk. Say 'quit' or 'slut' to exit.")
-    active_language = "en"
+    session_number = 1
 
     # TTS voice selection
     tts_prepare(en_voice="Zira", sv_voice="Bengt")
@@ -646,51 +674,60 @@ def main():
 
     asr_init(model_size="medium", use_gpu=use_gpu)  # set False if no GPU
 
+    active_language = "en"
     eliza_bot = Eliza(language=active_language)
 
     while True:
-        # Capture speech while SPACE is held
-        audio = record_while_holding_space()
-        if audio.size == 0:
-            print("(no speech captured; hold SPACE to talk)")
-            continue
+        print(f"--- Session {session_number} ---")
+        print("Hello / Hej! Hold SPACE to talk. Say 'quit' or 'slut' to exit.")
+        active_language = "en"
+        eliza_bot = Eliza(language=active_language)
 
-        lang_code = "sv" if active_language == "sv" else "en"
-        user_text_raw = transcribe_audio_whisper(audio, lang_code).strip()
-        user_text = user_text_raw.lower()
+        while True:
+            # Capture speech while SPACE is held
+            audio = record_while_holding_space()
+            if audio.size == 0:
+                print("(no speech captured; hold SPACE to talk)")
+                continue
 
-        if not user_text:
-            print("(didn't catch that)")
-            continue
+            lang_code = "sv" if active_language == "sv" else "en"
+            user_text_raw = transcribe_audio_whisper(audio, lang_code).strip()
+            user_text = user_text_raw.lower()
 
-        # Echo the recognised text so it appears just like typed input after
-        # releasing SPACE.
-        print(format_sentence(user_text_raw))
+            if not user_text:
+                print("(didn't catch that)")
+                continue
 
-        # Allow spoken exit words
-        words = re.findall(r"\b[\wåäö]+\b", user_text)
-        if any(w in QUIT_WORDS for w in words):
-            farewells = FAREWELLS_SV if active_language == "sv" else FAREWELLS_EN
-            farewell = format_sentence(random.choice(farewells))
-            print("ELIZA:", farewell)
-            speak(farewell, lang=active_language)
+            # Echo the recognised text so it appears just like typed input after
+            # releasing SPACE.
+            print(format_sentence(user_text_raw))
 
-            # wait a little before clearing
-            time.sleep(2)
+            # Allow spoken exit words
+            words = re.findall(r"\b[\wåäö]+\b", user_text)
+            if any(w in QUIT_WORDS for w in words):
+                farewells = FAREWELLS_SV if active_language == "sv" else FAREWELLS_EN
+                farewell = format_sentence(random.choice(farewells))
+                print("ELIZA:", farewell)
+                speak(farewell, lang=active_language)
 
-             # clear terminal (works on Windows, macOS, Linux)
-            os.system("cls" if os.name == "nt" else "clear")
-            break
+                # wait a little before clearing
+                time.sleep(2)
 
-        # Sticky language: only switch on strong cues
-        strong = detect_language_strong(user_text)
-        if strong and strong != active_language:
-            active_language = strong
-            eliza_bot.language = active_language
+                # clear terminal (works on Windows, macOS, Linux)
+                os.system("cls" if os.name == "nt" else "clear")
+                break
 
-        reply = format_sentence(eliza_bot.respond(user_text))
-        print(f"ELIZA: {reply}")
-        speak(reply, lang=active_language)
+            # Sticky language: only switch on strong cues
+            strong = detect_language_strong(user_text)
+            if strong and strong != active_language:
+                active_language = strong
+                eliza_bot.language = active_language
+
+            reply = format_sentence(eliza_bot.respond(user_text))
+            print(f"ELIZA: {reply}")
+            speak(reply, lang=active_language)
+
+        session_number += 1
 
 if __name__ == "__main__":
     main()
