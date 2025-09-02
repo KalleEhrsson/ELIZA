@@ -1,10 +1,11 @@
 import re
 import random
+import os, time
 
 import numpy as np
 import sounddevice as sd
-from faster_whisper import WhisperModel
 import queue, threading, time
+from faster_whisper import WhisperModel
 from pynput import keyboard
 
 # --- language detection helpers ---
@@ -14,6 +15,7 @@ ENGLISH_START_WORDS = ("hello", "hi", "hey", "why", "because", "i", "can", "are"
 
 GOODBYES_EN = {"quit", "bye", "goodbye"}
 GOODBYES_SV = {"slut", "hejdå", "adjö"}
+QUIT_WORDS = GOODBYES_EN | GOODBYES_SV
 
 def has_swedish_markers(text_lower):
     if any(ch in text_lower for ch in "åäö"):
@@ -617,11 +619,19 @@ def main():
     print("Hello / Hej! Hold SPACE to talk. Say 'quit' or 'slut' to exit.")
     active_language = "en"
 
-    # TTS voice selection you already have
+    # TTS voice selection
     tts_prepare(en_voice="Zira", sv_voice="Bengt")
 
-    # ASR setup
-    asr_init(model_size="small", use_gpu=True)  # set False if no GPU
+    import importlib
+
+    torch_spec = importlib.util.find_spec("torch")
+    if torch_spec:
+        torch = importlib.import_module("torch")
+        use_gpu = torch.cuda.is_available()
+    else:
+        use_gpu = False
+
+    asr_init(model_size="medium", use_gpu=use_gpu)  # set False if no GPU
 
     eliza_bot = Eliza(language=active_language)
 
@@ -633,29 +643,37 @@ def main():
             continue
 
         lang_code = "sv" if active_language == "sv" else "en"
-        user_text = transcribe_audio_whisper(audio, lang_code).strip()
+        user_text = transcribe_audio_whisper(audio, lang_code).strip().lower()
 
         if not user_text:
             print("(didn't catch that)")
             continue
 
-        print(f"YOU:   {user_text}")
+        # Echo the recognised text so it appears just like typed input after
+        # releasing SPACE.
+        print(user_text)
 
         # Allow spoken exit words
-        low = user_text.lower()
-        if low in {"quit", "bye", "goodbye", "slut", "hejdå", "adjö"}:
-            farewell = "Goodbye. Take care!" if active_language == "en" else "Hejdå. Ta hand om dig!"
+        words = re.findall(r"\b[\wåäö]+\b", user_text)
+        if any(w in QUIT_WORDS for w in words):
+            farewell = farewell.lower()
             print("ELIZA:", farewell)
             speak(farewell, lang=active_language)
+
+            # wait a little before clearing
+            time.sleep(2)
+
+             # clear terminal (works on Windows, macOS, Linux)
+            os.system("cls" if os.name == "nt" else "clear")
             break
 
         # Sticky language: only switch on strong cues
-        strong = detect_language_strong(low)
+        strong = detect_language_strong(user_text)
         if strong and strong != active_language:
             active_language = strong
             eliza_bot.language = active_language
 
-        reply = eliza_bot.respond(user_text)
+        reply = eliza_bot.respond(user_text).lower()
         print(f"ELIZA: {reply}")
         speak(reply, lang=active_language)
 
