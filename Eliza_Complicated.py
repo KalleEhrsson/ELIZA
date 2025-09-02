@@ -1,0 +1,663 @@
+import re
+import random
+
+import numpy as np
+import sounddevice as sd
+from faster_whisper import WhisperModel
+import queue, threading, time
+from pynput import keyboard
+
+# --- language detection helpers ---
+
+SWEDISH_START_WORDS = ("hej", "jag", "varför", "slut", "hejdå", "adjö", "svenska")
+ENGLISH_START_WORDS = ("hello", "hi", "hey", "why", "because", "i", "can", "are", "what", "how", "english")
+
+GOODBYES_EN = {"quit", "bye", "goodbye"}
+GOODBYES_SV = {"slut", "hejdå", "adjö"}
+
+def has_swedish_markers(text_lower):
+    if any(ch in text_lower for ch in "åäö"):
+        return True
+    if text_lower.startswith(SWEDISH_START_WORDS):
+        return True
+    if re.search(r"\b(svenska|byta till svenska|switch to swedish)\b", text_lower):
+        return True
+    return False
+
+def has_english_markers(text_lower):
+    if text_lower.startswith(ENGLISH_START_WORDS):
+        return True
+    if re.search(r"\b(english|switch to english|/lang en)\b", text_lower):
+        return True
+    return False
+
+def parse_lang_command(text_lower):
+    # Explicit commands override everything
+    if text_lower.startswith(("/lang sv", "/language sv", "/lang svenska")) or "switch to swedish" in text_lower:
+        return "sv"
+    if text_lower.startswith(("/lang en", "/language en")) or "switch to english" in text_lower:
+        return "en"
+    return None
+
+def detect_language_strong(text_lower):
+    # Strong hints only; returns "sv", "en", or None if ambiguous
+    cmd = parse_lang_command(text_lower)
+    if cmd:
+        return cmd
+    if has_swedish_markers(text_lower):
+        return "sv"
+    if has_english_markers(text_lower):
+        return "en"
+    return None
+
+# --- TTS: per-call engine ---
+import sys
+import pyttsx3
+
+_voice_names = {"en": None, "sv": None}  # preferred substrings like "Zira", "Bengt"
+_voice_cache = {"en": None, "sv": None}  # resolved voice IDs
+
+def _default_driver():
+    if sys.platform.startswith("win"):
+        return "sapi5"
+    if sys.platform == "darwin":
+        return "nsss"
+    return None  # Linux -> espeak
+
+def tts_prepare(en_voice=None, sv_voice=None):
+    """Call once at startup to set preferred voices by substring."""
+    _voice_names["en"] = en_voice
+    _voice_names["sv"] = sv_voice
+
+def _resolve_voice_id(lang):
+    """Resolve and cache a voice id for a language."""
+    if _voice_cache.get(lang):
+        return _voice_cache[lang]
+
+    engine = pyttsx3.init(driverName=_default_driver())
+    voices = engine.getProperty("voices")
+
+    # try explicit substring
+    name_sub = _voice_names.get(lang)
+    if name_sub:
+        sub = name_sub.lower()
+        for v in voices:
+            if sub in v.name.lower():
+                _voice_cache[lang] = v.id
+                return v.id
+
+    # fallback: language hints
+    hints = ("en", "eng", "english", "us", "gb") if lang == "en" else ("sv", "swe", "svenska", "swedish", "se")
+    for v in voices:
+        meta = (v.name + " " + v.id).lower()
+        if any(h in meta for h in hints):
+            _voice_cache[lang] = v.id
+            return v.id
+
+    return None  # no match
+
+def speak(text, lang="en", rate=175, volume=1.0):
+    """Speak text reliably by creating a fresh engine each call."""
+    engine = pyttsx3.init(driverName=_default_driver())
+    engine.setProperty("rate", rate)
+    engine.setProperty("volume", volume)
+
+    vid = _resolve_voice_id(lang)
+    if vid:
+        engine.setProperty("voice", vid)
+
+    engine.say(text)
+    engine.runAndWait()
+    engine.stop()
+    del engine
+# --- end TTS ---
+
+# --- ASR: faster-whisper helpers ---
+_ASR_MODEL = None
+
+def asr_init(model_size="small", use_gpu=True):
+    device = "cuda" if use_gpu else "cpu"
+    compute_type = "float16" if use_gpu else "int8"
+    global _ASR_MODEL
+    _ASR_MODEL = WhisperModel(model_size, device=device, compute_type=compute_type)
+
+def transcribe_audio_whisper(audio_mono_float32, lang_code):
+    # lang_code: "en" or "sv"
+    if _ASR_MODEL is None:
+        asr_init()
+    segments, _info = _ASR_MODEL.transcribe(
+        audio_mono_float32,
+        language=lang_code,
+        vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=400)
+    )
+    return "".join(seg.text for seg in segments).strip()
+# --- end ASR ---
+
+# --- Push-to-talk recording: hold SPACE to talk ---
+def record_while_holding_space(
+    wait_timeout=10,        # seconds to wait for first SPACE press
+    max_seconds=12,         # max capture duration while holding
+    samplerate=16000,
+    blocksize=1024
+):
+    q = queue.Queue()
+    listening = threading.Event()
+    started = threading.Event()
+    done = threading.Event()
+
+    def on_press(key):
+        if key == keyboard.Key.space and not listening.is_set():
+            listening.set()
+            started.set()
+            print("Listening... (release SPACE to stop)")
+
+    def on_release(key):
+        if key == keyboard.Key.space and listening.is_set():
+            listening.clear()
+            done.set()
+            return False  # stop listener
+
+    def callback(indata, frames, time_info, status):
+        if listening.is_set():
+            q.put(indata.copy())
+
+    with sd.InputStream(samplerate=samplerate, channels=1, dtype="float32",
+                        blocksize=blocksize, callback=callback):
+        with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+            if not started.wait(wait_timeout):
+                listener.stop()
+                return np.array([], dtype="float32")
+            done.wait(max_seconds)
+            listener.stop()
+
+    # collect audio chunks
+    frames = []
+    while not q.empty():
+        frames.append(q.get())
+    if not frames:
+        return np.array([], dtype="float32")
+    return np.concatenate(frames).flatten()
+# --- end PTT ---
+
+
+# --- ELIZA bot ---
+
+class Eliza:
+    def __init__(self, language="en"):
+        self.language = language
+
+        self.responses_english = [
+            (r'I need (.*)',
+             ["Why do you need {0}?",
+              "Would it really help you to get {0}?",
+              "Are you sure you need {0}?"]),
+
+            (r'Why don\'?t you ([^\?]*)\??',
+             ["Do you really think I don't {0}?",
+              "Perhaps I will {0} in the future.",
+              "Do you want me to {0}?"]),
+
+            (r'Why can\'?t I ([^\?]*)\??',
+             ["Do you think you should be able to {0}?",
+              "If you could {0}, what would you do?",
+              "I don't know, why can't you {0}?",
+              "Have you really tried?"]),
+
+            (r'I can\'?t (.*)',
+             ["How do you know you can't {0}?",
+              "Perhaps you could {0} if you tried.",
+              "What would it take for you to {0}?"]),
+
+            (r'I am (.*)',
+             ["Did you come to me because you are {0}?",
+              "How long have you been {0}?",
+              "How do you feel about being {0}?"]),
+
+            (r'I\'?m (.*)',
+             ["How does being {0} make you feel?",
+              "Do you enjoy being {0}?",
+              "Why do you tell me you're {0}?"]),
+
+            (r'Are you ([^\?]*)\??',
+             ["Why does it matter whether I am {0}?",
+              "Would you prefer if I were not {0}?",
+              "Perhaps you believe I am {0}.",
+              "I may be {0}, what do you think?"]),
+
+            (r'What (.*)',
+             ["Why do you ask?",
+              "How would an answer to that help you?",
+              "What do you think?"]),
+
+            (r'How (.*)',
+             ["How do you suppose?",
+              "Perhaps you can answer your own question.",
+              "What is it you're really asking?"]),
+
+            (r'Because (.*)',
+             ["Is that the real reason?",
+              "What other reasons come to mind?",
+              "Does that reason apply to anything else?",
+              "If {0}, what else must be true?"]),
+
+            (r'(.*) sorry (.*)',
+             ["There are many times when no apology is needed.",
+              "What feelings do you have when you apologize?"]),
+
+            (r'Hello(.*)',
+             ["Hello... I'm listening.",
+              "Hi there... how can I help you?",
+              "Hello, how are you feeling today?"]),
+
+            (r'I think (.*)',
+             ["Do you doubt {0}?",
+              "Do you really think so?",
+              "But you're not sure {0}?"]),
+
+            (r'(.*) friend (.*)',
+             ["Tell me more about your friends.",
+              "When you think of a friend, what comes to mind?",
+              "Why don't you tell me about a childhood friend?"]),
+
+            (r'Yes',
+             ["You seem quite sure.",
+              "OK, but can you elaborate a bit?"]),
+
+            (r'(.*) computer(.*)',
+             ["Are you really talking about me?",
+              "Does it seem strange to talk to a computer?",
+              "How do computers make you feel?",
+              "Do you feel threatened by computers?"]),
+
+            (r'Is it (.*)',
+             ["Do you think it is {0}?",
+              "Perhaps it's {0}, what do you think?",
+              "If it were {0}, what would you do?",
+              "It could well be that {0}."]),
+
+            (r'It is (.*)',
+             ["You seem very certain.",
+              "If I told you that it probably isn't {0}, what would you feel?"]),
+
+            (r'Can you ([^\?]*)\??',
+             ["What makes you think I can't {0}?",
+              "If I could {0}, then what?",
+              "Why do you ask if I can {0}?"]),
+
+            (r'Can I ([^\?]*)\??',
+             ["Perhaps you don't want to {0}.",
+              "Do you want to be able to {0}?",
+              "If you could {0}, would you?"]),
+
+            (r'You are (.*)',
+             ["Why do you think I am {0}?",
+              "Does it please you to think that I'm {0}?",
+              "Perhaps you would like me to be {0}.",
+              "Perhaps you're really talking about yourself?"]),
+
+            (r'You\'?re (.*)',
+             ["Why do you say I am {0}?",
+              "Why do you think I am {0}?",
+              "Are we talking about you, or me?"]),
+
+            (r'I don\'?t (.*)',
+             ["Don't you really {0}?",
+              "Why don't you {0}?",
+              "Do you want to {0}?"]),
+
+            (r'I feel (.*)',
+             ["Good, tell me more about these feelings.",
+              "Do you often feel {0}?",
+              "When do you usually feel {0}?",
+              "When you feel {0}, what do you do?"]),
+
+            (r'I have (.*)',
+             ["Why do you tell me that you've {0}?",
+              "Have you really {0}?",
+              "Now that you have {0}, what will you do next?"]),
+
+            (r'I would (.*)',
+             ["Could you explain why you would {0}?",
+              "Why would you {0}?",
+              "Who else knows that you would {0}?"]),
+
+            (r'Is there (.*)',
+             ["Do you think there is {0}?",
+              "It's likely that there is {0}.",
+              "Would you like there to be {0}?"]),
+
+            (r'My (.*)',
+             ["I see, your {0}.",
+              "Why do you say that your {0}?",
+              "When your {0}, how do you feel?"]),
+
+            (r'You (.*)',
+             ["We should be discussing you, not me.",
+              "Why do you say that about me?",
+              "Why do you care whether I {0}?"]),
+
+            (r'Why (.*)',
+             ["Why don't you tell me the reason why {0}?",
+              "Why do you think {0}?"]),
+
+            (r'I want (.*)',
+             ["What would it mean to you if you got {0}?",
+              "Why do you want {0}?",
+              "What would you do if you got {0}?",
+              "If you got {0}, then what would you do?"]),
+
+            (r'(.*) mother(.*)',
+             ["Tell me more about your mother.",
+              "What was your relationship with your mother like?",
+              "How do you feel about your mother?",
+              "How does this relate to your feelings today?",
+              "Good family relations are important."]),
+
+            (r'(.*) father(.*)',
+             ["Tell me more about your father.",
+              "How did your father make you feel?",
+              "How do you feel about your father?",
+              "Does your relationship with your father relate to your feelings today?",
+              "Do you have trouble showing affection with your family?"]),
+
+            (r'(.*) child(.*)',
+             ["Did you have close friends as a child?",
+              "What is your favorite childhood memory?",
+              "Do you remember any dreams or nightmares from childhood?",
+              "Did the other children sometimes tease you?",
+              "How do you think your childhood experiences relate to your feelings today?"]),
+
+            (r'(.*)\?',
+             ["Why do you ask that?",
+              "Please consider whether you can answer your own question.",
+              "Perhaps the answer lies within yourself?",
+              "Why don't you tell me?"]),
+
+            (r'(.*)',
+             ["Please tell me more.",
+              "Let's change focus a bit... Tell me about your family.",
+              "Can you elaborate on that?",
+              "Why do you say that {0}?",
+              "I see.",
+              "Very interesting.",
+              "{0}.",
+              "I see. And what does that tell you?",
+              "How does that make you feel?",
+              "How do you feel when you say that?"])
+        ]
+
+        self.responses_swedish = [
+            (r'Jag behöver (.*)',
+             ["Varför behöver du {0}?",
+              "Skulle det verkligen hjälpa dig att få {0}?",
+              "Är du säker på att du behöver {0}?"]),
+
+            (r'Varför gör du inte ([^\?]*)\??',
+             ["Tror du verkligen att jag inte {0}?",
+              "Kanske kommer jag att {0} i framtiden.",
+              "Vill du att jag ska {0}?"]),
+
+            (r'Varför kan jag inte ([^\?]*)\??',
+             ["Tycker du att du borde kunna {0}?",
+              "Om du kunde {0}, vad skulle du göra då?",
+              "Jag vet inte, varför kan du inte {0}?",
+              "Har du verkligen försökt?"]),
+
+            (r'Jag kan inte (.*)',
+             ["Hur vet du att du inte kan {0}?",
+              "Kanske skulle du kunna {0} om du försökte.",
+              "Vad skulle krävas för att du ska {0}?"]),
+
+            (r'Jag är (.*)',
+             ["Kom du till mig för att du är {0}?",
+              "Hur länge har du varit {0}?",
+              "Hur känns det att vara {0}?"]),
+
+            (r'Är du ([^\?]*)\??',
+             ["Varför spelar det någon roll om jag är {0}?",
+              "Skulle du föredra om jag inte var {0}?",
+              "Kanske tror du att jag är {0}.",
+              "Jag kan vara {0}, vad tror du?"]),
+
+            (r'Vad (.*)',
+             ["Varför frågar du?",
+              "Hur skulle ett svar på det hjälpa dig?",
+              "Vad tror du själv?"]),
+
+            (r'Hur (.*)',
+             ["Hur menar du?",
+              "Kanske kan du besvara din egen fråga.",
+              "Vad är det egentligen du undrar?"]),
+
+            (r'För att (.*)|Eftersom (.*)',
+             ["Är det den verkliga orsaken?",
+              "Vilka andra skäl kommer du att tänka på?",
+              "Gäller den orsaken i andra sammanhang?",
+              "Om {0}, vad mer måste vara sant?"]),
+
+            (r'(.*) förlåt (.*)',
+             ["Det finns många tillfällen då en ursäkt inte behövs.",
+              "Vilka känslor får du när du ber om ursäkt?"]),
+
+            (r'Hej(.*)',
+             ["Hej... jag lyssnar.",
+              "Hej där... hur kan jag hjälpa dig?",
+              "Hej, hur mår du idag?"]),
+
+            (r'Jag tror (.*)',
+             ["Tvivlar du på {0}?",
+              "Tror du verkligen det?",
+              "Men du är inte säker på {0}?"]),
+
+            (r'(.*) vän(.*)',
+             ["Berätta mer om dina vänner.",
+              "Vad tänker du på när du tänker på en vän?",
+              "Varför berättar du inte om en barndomsvän?"]),
+
+            (r'Ja',
+             ["Du verkar ganska säker.",
+              "Okej, men kan du utveckla lite?"]),
+
+            (r'(.*) dator(.*)',
+             ["Pratar du egentligen om mig?",
+              "Känns det märkligt att prata med en dator?",
+              "Hur får datorer dig att känna?",
+              "Känner du dig hotad av datorer?"]),
+
+            (r'Är det (.*)',
+             ["Tycker du att det är {0}?",
+              "Kanske är det {0}, vad tror du?",
+              "Om det vore {0}, vad skulle du göra?",
+              "Det kan mycket väl vara {0}."]),
+
+            (r'Det är (.*)',
+             ["Du verkar väldigt säker.",
+              "Om jag sa att det troligen inte är {0}, hur skulle du känna då?"]),
+
+            (r'Kan du ([^\?]*)\??',
+             ["Varför tror du att jag inte kan {0}?",
+              "Om jag kunde {0}, vad då?",
+              "Varför frågar du om jag kan {0}?"]),
+
+            (r'Kan jag ([^\?]*)\??',
+             ["Kanske vill du inte {0}.",
+              "Vill du kunna {0}?",
+              "Om du kunde {0}, skulle du det?"]),
+
+            (r'Du är (.*)',
+             ["Varför tror du att jag är {0}?",
+              "Gör det dig glad att tänka att jag är {0}?",
+              "Kanske vill du att jag ska vara {0}.",
+              "Kanske pratar du egentligen om dig själv?"]),
+
+            (r'Jag (?:gör|vill|kan) inte (.*)',
+             ["Gör du verkligen inte {0}?",
+              "Varför gör du inte {0}?",
+              "Vill du göra {0}?"]),
+
+            (r'Jag känner mig (.*)',
+             ["Bra, berätta mer om de här känslorna.",
+              "Känner du dig ofta {0}?",
+              "När brukar du känna dig {0}?",
+              "När du känner dig {0}, vad gör du då?"]),
+
+            (r'Jag känner (.*)',
+             ["Berätta mer om de känslorna.",
+              "Känner du ofta {0}?",
+              "När känner du {0}?"]),
+
+            (r'Jag har (.*)',
+             ["Varför berättar du att du har {0}?",
+              "Har du verkligen {0}?",
+              "Nu när du har {0}, vad gör du härnäst?"]),
+
+            (r'Jag skulle (.*)',
+             ["Kan du förklara varför du skulle {0}?",
+              "Varför skulle du {0}?",
+              "Vem mer vet att du skulle {0}?"]),
+
+            (r'Finns det (.*)',
+             ["Tror du att det finns {0}?",
+              "Det är troligt att det finns {0}.",
+              "Skulle du vilja att det fanns {0}?"]),
+
+            (r'Min(?:a|t)? (.*)',
+             ["Jag förstår, din {0}.",
+              "Varför säger du att din {0}?",
+              "När din {0}, hur känns det då?"]),
+
+            (r'Du (.*)',
+             ["Vi borde prata om dig, inte mig.",
+              "Varför säger du det där om mig?",
+              "Varför bryr du dig om huruvida jag {0}?"]),
+
+            (r'Varför (.*)',
+             ["Varför berättar du inte anledningen till varför {0}?",
+              "Varför tror du att {0}?"]),
+
+            (r'Jag vill (.*)',
+             ["Vad skulle det betyda för dig om du fick {0}?",
+              "Varför vill du ha {0}?",
+              "Vad skulle du göra om du fick {0}?",
+              "Om du fick {0}, vad skulle du göra då?"]),
+
+            (r'(.*) mamma(.*)|(.*) mor(.*)',
+             ["Berätta mer om din mamma.",
+              "Hur var din relation med din mamma?",
+              "Hur känner du för din mamma?",
+              "Hur hänger det här ihop med hur du känner idag?",
+              "Bra familjerelationer är viktiga."]),
+
+            (r'(.*) pappa(.*)|(.*) far(.*)',
+             ["Berätta mer om din pappa.",
+              "Hur fick din pappa dig att känna?",
+              "Hur känner du för din pappa?",
+              "Relaterar din relation till din pappa till hur du känner idag?",
+              "Har du svårt att visa känslor i din familj?"]),
+
+            (r'(.*) barndom(.*)|(.*) barn(.*)',
+             ["Hade du nära vänner som barn?",
+              "Vilket är ditt favoritminne från barndomen?",
+              "Minns du några drömmar eller mardrömmar från barndomen?",
+              "Retade de andra barnen dig ibland?",
+              "Hur tycker du att dina barndomsupplevelser hänger ihop med hur du känner idag?"]),
+
+            (r'(.*)\?',
+             ["Varför frågar du det?",
+              "Fundera på om du kan svara på din egen fråga.",
+              "Kanske finns svaret inom dig?",
+              "Varför berättar du inte för mig?"]),
+
+            (r'(.*)',
+             ["Berätta mer.",
+              "Låt oss byta fokus lite... berätta om din familj.",
+              "Kan du utveckla det?",
+              "Varför säger du att {0}?",
+              "Jag förstår.",
+              "Väldigt intressant.",
+              "{0}.",
+              "Jag förstår. Och vad säger det dig?",
+              "Hur får det dig att känna?",
+              "Hur känner du när du säger det?"])
+        ]
+
+        self.reflections = {
+            "am": "are", "was": "were",
+            "i": "you", "i'd": "you would", "i've": "you have", "i'll": "you will",
+            "my": "your", "are": "am", "you've": "i have", "you'll": "i will",
+            "your": "my", "yours": "mine", "you": "me", "me": "you",
+            "jag": "du", "mig": "dig", "min": "din", "mitt": "ditt", "mina": "dina",
+            "du": "jag", "dig": "mig", "din": "min", "ditt": "mitt", "dina": "mina"
+        }
+
+    def get_active_rules(self):
+        return self.responses_swedish if self.language == "sv" else self.responses_english
+
+    def respond(self, user_statement):
+        for regex_pattern, possible_replies in self.get_active_rules():
+            match = re.search(regex_pattern, user_statement, re.IGNORECASE)
+            if match:
+                template = random.choice(possible_replies)
+                fills = [self.reflect_text(g) for g in match.groups() if g is not None]
+                return template.format(*fills)
+        return "I'm not sure I understand you fully." if self.language == "en" else "Jag är inte säker på att jag förstår dig helt."
+
+    def reflect_text(self, fragment):
+        if fragment is None:
+            return ""
+        words = re.findall(r"\b[\wåäöÅÄÖ']+\b", fragment.lower())
+        reflected = [self.reflections.get(w, w) for w in words]
+        return " ".join(reflected)
+
+def lang_to_bcp47(active_language):
+    return "sv-SE" if active_language == "sv" else "en-US"
+
+def main():
+    print("Hello / Hej! Hold SPACE to talk. Say 'quit' or 'slut' to exit.")
+    active_language = "en"
+
+    # TTS voice selection you already have
+    tts_prepare(en_voice="Zira", sv_voice="Bengt")
+
+    # ASR setup
+    asr_init(model_size="small", use_gpu=True)  # set False if no GPU
+
+    eliza_bot = Eliza(language=active_language)
+
+    while True:
+        # Capture speech while SPACE is held
+        audio = record_while_holding_space()
+        if audio.size == 0:
+            print("(no speech captured; hold SPACE to talk)")
+            continue
+
+        lang_code = "sv" if active_language == "sv" else "en"
+        user_text = transcribe_audio_whisper(audio, lang_code).strip()
+
+        if not user_text:
+            print("(didn't catch that)")
+            continue
+
+        print(f"YOU:   {user_text}")
+
+        # Allow spoken exit words
+        low = user_text.lower()
+        if low in {"quit", "bye", "goodbye", "slut", "hejdå", "adjö"}:
+            farewell = "Goodbye. Take care!" if active_language == "en" else "Hejdå. Ta hand om dig!"
+            print("ELIZA:", farewell)
+            speak(farewell, lang=active_language)
+            break
+
+        # Sticky language: only switch on strong cues
+        strong = detect_language_strong(low)
+        if strong and strong != active_language:
+            active_language = strong
+            eliza_bot.language = active_language
+
+        reply = eliza_bot.respond(user_text)
+        print(f"ELIZA: {reply}")
+        speak(reply, lang=active_language)
+
+if __name__ == "__main__":
+    main()
