@@ -141,13 +141,13 @@ The bot includes extensive pattern matching for both languages with reflection c
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Voice Input   │───▶│  Speech-to-Text  │───▶│Language Detection│
+│   Voice Input   │──▶│  Speech-to-Text  │──▶│Language Detection│
 │ (Push-to-Talk)  │    │ (Faster Whisper) │    │   & Switching   │
 │   SPACE key     │    │  CPU/GPU Support │    │ Sticky Algorithm│
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                                          │
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Voice Output   │◀───│  Text-to-Speech  │◀───│ ELIZA Response  │
+│  Voice Output   │◀──│  Text-to-Speech  │◀── │ ELIZA Response  │
 │   (pyttsx3)     │    │Cross-platform TTS│    │   Generation    │
 │ Per-call Engine │    │ Voice Selection  │    │Pattern Matching │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
