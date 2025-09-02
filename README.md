@@ -1,217 +1,355 @@
-# 🎤 Multilingual Voice ELIZA Chatbot
+# ELIZA Voice Chatbot 🎙️
 
-> **School Project** - A modern, voice-enabled implementation of the classic ELIZA psychotherapist chatbot with support for **English** and **Swedish**. Features real-time speech recognition, text-to-speech synthesis, and intelligent language switching.
+A modern, voice-enabled implementation of the classic ELIZA psychotherapist chatbot with bilingual support for English and Swedish. This project combines traditional conversational AI with cutting-edge speech recognition and text-to-speech technologies for an immersive therapeutic conversation experience.
+
+![Python](https://img.shields.io/badge/python-v3.7+-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Voice Enabled](https://img.shields.io/badge/voice-enabled-orange.svg)
+![Bilingual](https://img.shields.io/badge/languages-English%20%7C%20Swedish-red.svg)
+![ASR](https://img.shields.io/badge/ASR-Faster%20Whisper-blue.svg)
 
 ## ✨ Features
 
-- 🎙️ **Push-to-talk voice interaction** - Hold SPACE to speak
-- 🌍 **Bilingual support** - English and Swedish with automatic language detection
-- 🧠 **Smart language switching** - Detects language from speech patterns and explicit commands
-- 🗣️ **Text-to-speech synthesis** - Natural voice responses in both languages
-- 🎯 **Advanced speech recognition** - Powered by Faster Whisper for accurate transcription
-- 🔄 **Real-time processing** - Instant response generation and voice synthesis
+- **🎙️ Push-to-Talk Interface** - Hold SPACE to speak, release to process
+- **🌍 Bilingual Support** - Seamlessly switch between English and Swedish
+- **🧠 Intelligent Language Detection** - Automatically detects and switches languages
+- **🗣️ Natural Voice Synthesis** - High-quality text-to-speech in both languages  
+- **⚡ Real-Time Processing** - Powered by Faster Whisper for instant transcription
+- **🔄 Smart Context Handling** - Maintains conversation flow across language switches
+- **🎯 Advanced Pattern Matching** - Rich response patterns for natural conversations
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Python 3.7+
-- CUDA-compatible GPU (optional, for faster speech recognition)
-- Microphone and speakers/headphones
+- **Python 3.7+** (Python 3.8+ recommended)
+- **Microphone and speakers/headphones**
+- **CUDA-compatible GPU** (optional, for enhanced performance)
 
 ### Installation
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/eliza-voice-chatbot.git
-   cd eliza-voice-chatbot
+   git clone https://github.com/KalleEhrsson/ELIZA.git
+   cd ELIZA
    ```
 
-2. **Install dependencies**
+2. **Create a virtual environment (recommended)**
+   ```bash
+   python -m venv eliza-env
+   source eliza-env/bin/activate  # On Windows: eliza-env\Scripts\activate
+   ```
+
+3. **Install dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Run the chatbot**
+4. **Run the chatbot**
    ```bash
    python eliza_voice.py
    ```
 
-## 📦 Dependencies
+### Dependencies
 
-```
-numpy
-sounddevice
-faster-whisper
-pynput
-pyttsx3
-```
-
-Create a `requirements.txt` file:
+Create a `requirements.txt` file with:
 ```txt
 numpy>=1.21.0
 sounddevice>=0.4.0
 faster-whisper>=0.9.0
 pynput>=1.7.0
 pyttsx3>=2.90
+torch>=1.9.0  # Optional: for GPU acceleration detection
 ```
 
-## 🎯 How to Use
+## 🎮 Usage Guide
 
+### Basic Operation
 1. **Start the program** - Run `python eliza_voice.py`
-2. **Talk to ELIZA** - Hold down the SPACE key and speak
-3. **Release to process** - Let go of SPACE when you're done speaking
-4. **Listen to response** - ELIZA will respond with synthesized speech
+2. **Interact with ELIZA** - Hold down SPACE and speak, or type your message and press Enter
+3. **Release or press Enter** - Let go of SPACE or hit Enter when you're done
+4. **Listen to response** - ELIZA will reply with synthesized speech
 
-### Voice Commands
+### Language Switching
 
-#### Language Switching
-- **English**: Say "switch to english" or "/lang en"
-- **Swedish**: Say "byta till svenska" or "/lang sv"
+The system supports seamless language switching during conversations:
 
-#### Exit Commands
-- **English**: "quit", "bye", "goodbye"
-- **Swedish**: "slut", "hejdå", "adjö"
+**English Commands:**
+- Voice: "Switch to English" 
+- Text commands: `/lang en`, `/language en`
+- Exit phrases: "quit", "bye", "goodbye"
 
-## 🧠 Language Detection
+**Swedish Commands:**
+- Voice: "Byta till svenska" or "switch to Swedish"
+- Text commands: `/lang sv`, `/language sv`, `/lang svenska`
+- Exit phrases: "slut", "hejdå", "adjö"
 
-The chatbot automatically detects language using:
+### Session Management
+- Each conversation is numbered as a session
+- Exiting starts a new session automatically
+- Terminal clears between sessions for fresh starts
+- Maintains conversation context within each session
 
-- **Swedish markers**: åäö characters, common Swedish words
-- **English markers**: Common English starter words and patterns  
-- **Explicit commands**: Direct language switch requests
-- **Context clues**: Language-specific phrases and expressions
+### Automatic Language Detection
+The system intelligently detects language using multiple strategies:
+- **Character markers** - Swedish: åäö characters, English: standard patterns
+- **Start word recognition** - Language-specific conversation starters
+- **Contextual analysis** - Phrase structures and linguistic patterns
+- **Explicit commands** - Direct language switch requests
+- **Sticky language switching** - Only switches on strong linguistic cues to prevent accidental changes
 
-## 🔧 Configuration
+## ⚙️ Configuration
 
-### Voice Selection
-
-Modify the voice preferences in the `main()` function:
-
+### Voice Settings
+Customize TTS voices in the `main()` function:
 ```python
-# Set preferred voices by name substring
-tts_prepare(en_voice="Zira", sv_voice="Bengt")  # Windows SAPI voices
+# Set preferred voices by name substring (Windows SAPI example)
+tts_prepare(en_voice="Zira", sv_voice="Bengt")
+
+# Other common voice names:
+# Windows: "Zira", "David", "Mark", "Hazel"  
+# macOS: "Alex", "Samantha", "Daniel"
+# Linux: Usually uses espeak or festival
 ```
 
 ### Speech Recognition Model
-
-Adjust the Whisper model size for your needs:
-
+Adjust Whisper model based on your hardware capabilities:
 ```python
-# Options: tiny, base, small, medium, large
-asr_init(model_size="small", use_gpu=True)
+# Available models: tiny, base, small, medium, large
+# GPU detection is automatic via torch.cuda.is_available()
+asr_init(model_size="medium", use_gpu=True)  # Set to False to force CPU
 ```
 
-### Recording Settings
-
-Customize recording parameters in `record_while_holding_space()`:
-
+### Recording Parameters
+Fine-tune audio capture in `record_while_holding_space()`:
 ```python
 record_while_holding_space(
-    wait_timeout=10,    # Seconds to wait for first SPACE press
-    max_seconds=12,     # Maximum recording duration
-    samplerate=16000,   # Audio sample rate
-    blocksize=1024      # Audio processing block size
+    wait_timeout=10,      # Seconds to wait for first SPACE press
+    max_seconds=12,       # Maximum recording duration while holding SPACE
+    samplerate=16000,     # Audio sample rate (16kHz recommended)
+    blocksize=1024        # Audio processing block size
 )
 ```
 
-## 🏗️ Architecture
+### ELIZA Response Patterns
+The bot includes extensive pattern matching for both languages with reflection capabilities:
+- **English**: 30+ conversation patterns covering personal statements, questions, emotions
+- **Swedish**: 30+ culturally adapted patterns with proper Swedish grammar
+- **Word reflection**: Automatically converts "I" ↔ "you", "my" ↔ "your", "jag" ↔ "du", etc.
+
+## 🏗️ System Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Voice Input   │───▶│  Speech-to-Text  │───▶│ Language Detect│
-│  (Push-to-Talk) │    │ (Faster Whisper) │    │   & Switching   │
+│   Voice Input   │──▶│  Speech-to-Text  │──▶│Language Detection│
+│ (Push-to-Talk)  │    │ (Faster Whisper) │    │   & Switching   │
+│   SPACE key     │    │  CPU/GPU Support │    │ Sticky Algorithm│
 └─────────────────┘    └──────────────────┘    └─────────────────┘
                                                          │
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│  Voice Output   │◀───│  Text-to-Speech  │◀───│ ELIZA Response │
-│   (pyttsx3)     │    │    (pyttsx3)     │    │   Generation    │
+│  Voice Output   │◀──│  Text-to-Speech  │◀── │ ELIZA Response  │
+│   (pyttsx3)     │    │Cross-platform TTS│    │   Generation    │
+│ Per-call Engine │    │ Voice Selection  │    │Pattern Matching │
 └─────────────────┘    └──────────────────┘    └─────────────────┘
 ```
 
-## 📋 ELIZA Response Patterns
+### Core Components
 
-The chatbot includes comprehensive response patterns for both languages:
+**Audio Processing Pipeline**:
+- `record_while_holding_space()` - Real-time audio capture with push-to-talk
+- `transcribe_audio_whisper()` - Speech recognition with VAD filtering
+- `speak()` - Text-to-speech with per-call engine initialization
 
-### English Patterns
-- Personal statements ("I am...", "I feel...")
-- Questions ("What...", "Why...", "How...")
-- Family relationships ("mother", "father", "child")
-- Emotional expressions and reflections
+**Language Intelligence**:
+- `detect_language_strong()` - Multi-strategy language detection
+- `has_swedish_markers()` / `has_english_markers()` - Pattern-based detection
+- `parse_lang_command()` - Explicit command parsing
 
-### Swedish Patterns  
-- Personal statements ("Jag är...", "Jag känner...")
-- Questions ("Vad...", "Varför...", "Hur...")
-- Family relationships ("mamma", "pappa", "barn")
-- Swedish-specific grammar and expressions
+**Conversation Engine**:
+- `Eliza` class with bilingual response patterns
+- `reflect_text()` - Grammatical reflection (I ↔ you transformations)
+- Session-based conversation management
 
-## 🛠️ Troubleshooting
+## 💬 Conversation Examples
 
-### Common Issues
+### English Conversation
+```
+Session 1
+Hello / Hej! Hold SPACE to talk. Say 'quit' or 'slut' to exit.
+
+[User holds SPACE and speaks: "I feel anxious about my job"]
+I feel anxious about my job.
+ELIZA: When do you usually feel anxious about your job?
+
+[User: "My boss is very demanding"]  
+My boss is very demanding.
+ELIZA: Tell me more about your boss.
+
+[User: "Switch to Swedish"]
+Switch to Swedish.
+ELIZA: [Language switched to Swedish]
+```
+
+### Swedish Conversation  
+```
+[User: "Jag känner mig trött"]
+Jag känner mig trött.
+ELIZA: Känner du dig ofta trött?
+
+[User: "Min mamma ringer hela tiden"]
+Min mamma ringer hela tiden.  
+ELIZA: Berätta mer om din mamma.
+
+[User: "quit"]
+Quit.
+ELIZA: Loggar ut som ett gammalt ICQ-konto… hej då!
+```
+
+## 🔧 Troubleshooting
+
+### Audio Issues
 
 **No audio input detected:**
-- Check microphone permissions
-- Verify `sounddevice` can access your microphone
-- Try: `python -c "import sounddevice as sd; print(sd.query_devices())"`
+- Verify microphone permissions in system settings
+- Test microphone access: `python -c "import sounddevice as sd; print(sd.query_devices())"`
+- Check default audio device configuration
 
-**TTS not working:**
-- Windows: Ensure SAPI voices are installed
-- macOS: Check system voice settings  
-- Linux: Install `espeak` or `festival`
+**Text-to-speech not working:**
+- **Windows**: Ensure SAPI voices are installed in system settings
+- **macOS**: Verify system voice settings in Accessibility
+- **Linux**: Install speech synthesis engines: `sudo apt-get install espeak festival`
+
+### Performance Issues
 
 **GPU/CUDA errors:**
-- Set `use_gpu=False` in `asr_init()` for CPU-only mode
-- Ensure CUDA toolkit is properly installed for GPU acceleration
+- Set `use_gpu=False` in `asr_init()` for CPU-only processing
+- Verify CUDA toolkit installation for GPU acceleration
+- Check GPU memory availability (4GB+ VRAM recommended)
 
-**Language detection issues:**
-- Speak clearly and use language-specific words
-- Try explicit commands: "/lang en" or "/lang sv"
+**Language detection problems:**
+- Speak clearly and use language-specific vocabulary
+- Try explicit language commands: "/lang en" or "/lang sv"
+- Ensure proper microphone distance and audio quality
+
+### Performance Optimization
+
+**Memory & CPU:**
+- Per-call TTS engine initialization prevents memory leaks
+- Audio processing uses efficient numpy arrays
+- Whisper model caching for faster subsequent transcriptions
+
+**Hardware Recommendations:**
+- **Minimum**: 4GB RAM, dual-core CPU, integrated audio
+- **Recommended**: 8GB+ RAM, quad-core CPU, dedicated GPU with 4GB+ VRAM
+- **Storage**: 2GB free space for Whisper models
+
+**Model Size Selection:**
+| Model | Size | VRAM | Speed | Accuracy |
+|-------|------|------|-------|----------|
+| tiny | 39 MB | 1 GB | Fastest | Basic |
+| base | 74 MB | 1 GB | Fast | Good |  
+| small | 244 MB | 2 GB | Medium | Better |
+| medium | 769 MB | 5 GB | Slow | Excellent |
+| large | 1550 MB | 10 GB | Slowest | Best |
 
 ## 🤝 Contributing
 
-Contributions are welcome! Here are some ways to help:
+We welcome contributions! Here are ways to help:
 
-- 🌐 Add support for more languages
-- 🎨 Improve the user interface
-- 🔧 Optimize performance
-- 📝 Add more ELIZA response patterns
-- 🐛 Fix bugs and improve error handling
+- 🌐 **Add language support** - Implement new language patterns
+- 🎨 **Improve UI/UX** - Enhanced user interface design
+- ⚡ **Performance optimization** - Speed and memory improvements  
+- 📝 **Expand conversation patterns** - More sophisticated responses
+- 🐛 **Bug fixes** - Error handling and stability improvements
+- 📚 **Documentation** - Better guides and examples
 
-### Development Setup
+### Development Process
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Make your changes and test thoroughly
-4. Submit a pull request with a clear description
+1. **Fork the repository**
+2. **Create a feature branch**: `git checkout -b feature-awesome-addition`
+3. **Make changes and test thoroughly**
+4. **Submit a pull request** with clear description and test results
 
-## 📄 License
+### Code Style & Guidelines
+- Follow PEP 8 Python style guidelines
+- Use descriptive variable names and clear function documentation
+- Maintain bilingual support in all new features
+- Test on multiple platforms (Windows, macOS, Linux)
+- Include both voice and text examples in documentation
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+## 🔬 Technical Implementation Details
 
-## 🙏 Acknowledgments
+### Audio Pipeline
+```python
+# Real-time audio capture with threading
+def record_while_holding_space():
+    # Uses sounddevice for cross-platform audio
+    # Implements push-to-talk with keyboard listener
+    # Thread-safe queue for audio chunks
+```
 
-- **ELIZA** - Original concept by Joseph Weizenbaum (1966)
-- **Faster Whisper** - High-performance speech recognition
-- **pyttsx3** - Cross-platform text-to-speech synthesis
-- **OpenAI Whisper** - Foundation for the speech recognition model
+### Language Detection Algorithm  
+```python
+def detect_language_strong(text_lower):
+    # 1. Check explicit commands (/lang en, byta till svenska)
+    # 2. Analyze character patterns (åäö for Swedish)
+    # 3. Match language-specific starter words
+    # 4. Return None for ambiguous input (sticky behavior)
+```
 
-## 📊 System Requirements
+### TTS Engine Management
+```python  
+def speak(text, lang="en", rate=175, volume=1.0):
+    # Creates fresh engine per call to prevent crashes
+    # Platform-specific driver selection (SAPI5, nsss, espeak)
+    # Voice caching for performance
+    # Automatic cleanup to prevent memory leaks
+```
 
-### Minimum Requirements
-- **OS**: Windows 10, macOS 10.14, Ubuntu 18.04+
-- **RAM**: 4GB (8GB recommended for GPU usage)
-- **Storage**: 2GB free space for models
-- **Audio**: Microphone and audio output device
+### ELIZA Response Generation
+```python
+class Eliza:
+    # Regex-based pattern matching
+    # Word reflection transformations  
+    # Bilingual response templates
+    # Contextual response selection
+```
 
-### Recommended Requirements
-- **GPU**: CUDA-compatible GPU with 4GB+ VRAM
-- **RAM**: 8GB+
-- **CPU**: Multi-core processor for real-time processing
+## 📊 Project Statistics
+
+- **~500 lines of Python code**
+- **60+ therapeutic response patterns**
+- **13 English farewell messages**  
+- **13 Swedish farewell messages**
+- **Cross-platform compatibility**
+- **Real-time audio processing**
+- **GPU acceleration support**
+
+## 🎓 Educational Value
+
+This project demonstrates several advanced programming concepts:
+
+- **Natural Language Processing**: Pattern matching, text reflection, language detection
+- **Audio Processing**: Real-time capture, speech recognition, synthesis  
+- **Multilingual Systems**: Dynamic language switching, cultural adaptation
+- **Threading**: Concurrent audio processing and user input handling
+- **Hardware Integration**: GPU detection, platform-specific optimizations
+- **User Interface Design**: Push-to-talk interaction, session management
+
+## 🌟 Inspiration & References
+
+This implementation pays homage to Joseph Weizenbaum's original ELIZA (1966) while incorporating modern technologies:
+
+- **Historical Context**: One of the first chatbots to demonstrate natural language conversation
+- **Therapeutic Approach**: Non-directive conversation techniques from person-centered therapy  
+- **Modern Enhancements**: Voice interaction, multilingual support, advanced speech recognition
+- **Cultural Adaptation**: Swedish language patterns and cultural references
 
 ---
 
-**School Project - Made with ❤️ for learning multilingual conversational AI**
+**School Project** - Created with ❤️ for learning multilingual conversational AI, speech processing, and human-computer interaction.
 
-*This project was created as part of a computer science coursework exploring natural language processing, speech recognition, and multilingual AI systems.*
+*This project explores the intersection of classic AI concepts with modern speech technology, demonstrating how traditional algorithms can be enhanced with contemporary tools to create engaging, accessible applications.*
 
-*For questions, issues, or feature requests, please open a GitHub issue.*
+---
+*"The computer programmer is a creator of universes for which he alone is responsible."* - Joseph Weizenbaum
