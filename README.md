@@ -351,13 +351,5 @@ This implementation pays homage to Joseph Weizenbaum's original ELIZA (1966) whi
 
 *This project explores the intersection of classic AI concepts with modern speech technology, demonstrating how traditional algorithms can be enhanced with contemporary tools to create engaging, accessible applications.*
 
-## 📞 Support & Contact
-
-For questions, issues, or feature requests:
-- 🐛 **Bug Reports**: Open a [GitHub Issue](https://github.com/KalleEhrsson/ELIZA/issues)  
-- 💡 **Feature Requests**: Submit a [GitHub Issue](https://github.com/KalleEhrsson/ELIZA/issues) with the "enhancement" label
-- 📖 **Documentation**: Check this README and inline code comments
-- 🔧 **Development**: See the Contributing section above
-
 ---
 *"The computer programmer is a creator of universes for which he alone is responsible."* - Joseph Weizenbaum
