@@ -8,6 +8,25 @@ import queue, threading, time
 from faster_whisper import WhisperModel
 from pynput import keyboard
 
+def get_single_key():
+    """Read a single keypress without waiting for Enter."""
+    try:
+        import msvcrt  # type: ignore
+        return msvcrt.getwch()
+    except Exception:
+        import sys
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return ch
+
 # --- language detection helpers ---
 
 SWEDISH_START_WORDS = ("hej", "jag", "varför", "slut", "hejdå", "adjö", "svenska")
@@ -183,7 +202,8 @@ def record_while_holding_space(
     wait_timeout=10,        # seconds to wait for first SPACE press
     max_seconds=12,         # max capture duration while holding
     samplerate=16000,
-    blocksize=1024
+    blocksize=1024,
+    already_pressed=False,
 ):
     q = queue.Queue()
     listening = threading.Event()
@@ -208,7 +228,14 @@ def record_while_holding_space(
 
     with sd.InputStream(samplerate=samplerate, channels=1, dtype="float32",
                         blocksize=blocksize, callback=callback):
-        with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+        with keyboard.Listener(
+            on_press=None if already_pressed else on_press,
+            on_release=on_release,
+        ) as listener:
+            if already_pressed:
+                listening.set()
+                started.set()
+                print("Listening... (release SPACE to stop)")
             if not started.wait(wait_timeout):
                 listener.stop()
                 return np.array([], dtype="float32")
@@ -657,6 +684,32 @@ class Eliza:
 def lang_to_bcp47(active_language):
     return "sv-SE" if active_language == "sv" else "en-US"
 
+def get_user_input(active_language):
+    """Return user's raw and lowercased text from typing or speech."""
+    print("> ", end="", flush=True)
+    first = get_single_key()
+
+    if first == " ":
+        audio = record_while_holding_space(already_pressed=True)
+        if audio.size == 0:
+            print("(no speech captured; hold SPACE to talk)")
+            return None
+        lang_code = "sv" if active_language == "sv" else "en"
+        raw = transcribe_audio_whisper(audio, lang_code).strip()
+        if not raw:
+            print("(didn't catch that)")
+            return None
+        print(format_sentence(raw))
+        return raw, raw.lower()
+
+    # typed input
+    print(first, end="", flush=True)
+    rest = sys.stdin.readline()
+    raw = (first + rest).strip()
+    if not raw:
+        return None
+    return raw, raw.lower()
+
 def main():
     session_number = 1
 
@@ -679,30 +732,17 @@ def main():
 
     while True:
         print(f"--- Session {session_number} ---")
-        print("Hello / Hej! Hold SPACE to talk. Say 'quit' or 'slut' to exit.")
+        print("Hello ! Hold SPACE to talk or start typing to write. Say 'quit' or 'slut' to exit.")
         active_language = "en"
         eliza_bot = Eliza(language=active_language)
 
         while True:
-            # Capture speech while SPACE is held
-            audio = record_while_holding_space()
-            if audio.size == 0:
-                print("(no speech captured; hold SPACE to talk)")
+            user_data = get_user_input(active_language)
+            if user_data is None:
                 continue
+            user_text_raw, user_text = user_data
 
-            lang_code = "sv" if active_language == "sv" else "en"
-            user_text_raw = transcribe_audio_whisper(audio, lang_code).strip()
-            user_text = user_text_raw.lower()
-
-            if not user_text:
-                print("(didn't catch that)")
-                continue
-
-            # Echo the recognised text so it appears just like typed input after
-            # releasing SPACE.
-            print(format_sentence(user_text_raw))
-
-            # Allow spoken exit words
+            # Allow exit words in either mode
             words = re.findall(r"\b[\wåäö]+\b", user_text)
             if any(w in QUIT_WORDS for w in words):
                 farewells = FAREWELLS_SV if active_language == "sv" else FAREWELLS_EN
