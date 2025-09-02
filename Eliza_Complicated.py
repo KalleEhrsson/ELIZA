@@ -17,6 +17,9 @@ GOODBYES_EN = {"quit", "bye", "goodbye"}
 GOODBYES_SV = {"slut", "hejdå", "adjö"}
 QUIT_WORDS = GOODBYES_EN | GOODBYES_SV
 
+FAREWELLS_EN = ["Goodbye!", "Bye!", "See you!"]
+FAREWELLS_SV = ["Hejdå!", "Adjö!", "Vi ses!"]
+
 def has_swedish_markers(text_lower):
     if any(ch in text_lower for ch in "åäö"):
         return True
@@ -51,6 +54,16 @@ def detect_language_strong(text_lower):
     if has_english_markers(text_lower):
         return "en"
     return None
+
+def format_sentence(text):
+    """Return text with leading capital and terminal punctuation."""
+    text = text.strip()
+    if not text:
+        return ""
+    text = text[0].upper() + text[1:]
+    if text[-1] not in ".!?":
+        text += "."
+    return text
 
 # --- TTS: per-call engine ---
 import sys
@@ -643,7 +656,8 @@ def main():
             continue
 
         lang_code = "sv" if active_language == "sv" else "en"
-        user_text = transcribe_audio_whisper(audio, lang_code).strip().lower()
+        user_text_raw = transcribe_audio_whisper(audio, lang_code).strip()
+        user_text = user_text_raw.lower()
 
         if not user_text:
             print("(didn't catch that)")
@@ -651,12 +665,13 @@ def main():
 
         # Echo the recognised text so it appears just like typed input after
         # releasing SPACE.
-        print(user_text)
+        print(format_sentence(user_text_raw))
 
         # Allow spoken exit words
         words = re.findall(r"\b[\wåäö]+\b", user_text)
         if any(w in QUIT_WORDS for w in words):
-            farewell = farewell.lower()
+            farewells = FAREWELLS_SV if active_language == "sv" else FAREWELLS_EN
+            farewell = format_sentence(random.choice(farewells))
             print("ELIZA:", farewell)
             speak(farewell, lang=active_language)
 
@@ -673,7 +688,7 @@ def main():
             active_language = strong
             eliza_bot.language = active_language
 
-        reply = eliza_bot.respond(user_text).lower()
+        reply = format_sentence(eliza_bot.respond(user_text))
         print(f"ELIZA: {reply}")
         speak(reply, lang=active_language)
 
