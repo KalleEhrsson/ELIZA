@@ -45,6 +45,16 @@ def get_single_key():
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
 
+def flush_input_buffer():
+    """Clear any pending keyboard input to avoid unintended repeats."""
+    try:
+        import msvcrt  # Windows
+        while msvcrt.kbhit():
+            msvcrt.getwch()
+    except Exception:  # Unix-like
+        import sys
+        import termios
+        termios.tcflush(sys.stdin, termios.TCIFLUSH)
 
 # ---------------------------------------------------------
 # Language detection helpers and keyword sets
@@ -202,7 +212,7 @@ def speak(text, lang="en", rate=175, volume=1.0):
 # ---------------------------------------------------------
 _ASR_MODEL = None
 
-def asr_init(model_size="small", use_gpu=True):
+def asr_init(model_size="mediam", use_gpu=True):
     """Load Whisper model into memory (choose GPU or CPU)."""
     device = "cuda" if use_gpu else "cpu"
     compute_type = "float16" if use_gpu else "int8"
@@ -273,6 +283,7 @@ def record_while_holding_space(
     frames = []
     while not q.empty():
         frames.append(q.get())
+        flush_input_buffer()
     return np.concatenate(frames).flatten() if frames else np.array([], dtype="float32")
 
 
@@ -760,7 +771,7 @@ def main():
         use_gpu = torch.cuda.is_available()
 
     # Initialize ASR model
-    asr_init(model_size="small", use_gpu=use_gpu)
+    asr_init(model_size="medium", use_gpu=use_gpu)
 
 # Available models: tiny, base, small, medium, large-v2.
 
@@ -771,6 +782,9 @@ def main():
 
     active_language = "en"
     eliza_bot = Eliza(language=active_language)
+
+# Clear any setup output before showing user prompts
+    os.system("cls" if os.name == "nt" else "clear")
 
     while True:
         print(f"--- Session {session_number} ---")
