@@ -1,3 +1,19 @@
+"""
+Eliza_Complicated.py
+Voice-enabled ELIZA chatbot with:
+- Speech input (push-to-talk using SPACE + faster-whisper for speech-to-text)
+- Text input (typed directly into terminal)
+- Language detection (Swedish or English, with automatic switching)
+- Voice output (pyttsx3 text-to-speech with preferred voices)
+
+Main flow:
+1. Wait for user input (speech or text).
+2. Detect language (sticky unless strong cues appear).
+3. Pass input through ELIZA pattern-matching rules.
+4. Respond with text + synthesized speech.
+5. Exit gracefully when quit words are spoken or typed.
+"""
+
 import re
 import random
 import os, time
@@ -8,16 +24,18 @@ import queue, threading, time
 from faster_whisper import WhisperModel
 from pynput import keyboard
 
+# ---------------------------------------------------------
+# Single-key input helper (for detecting SPACE quickly)
+# ---------------------------------------------------------
 def get_single_key():
-    """Read a single keypress without waiting for Enter."""
+    """Read a single keypress without waiting for Enter (cross-platform)."""
     try:
-        import msvcrt  # type: ignore
+        import msvcrt  # Windows
         return msvcrt.getwch()
-    except Exception:
+    except Exception:  # Unix-like
         import sys
         import termios
         import tty
-
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         try:
@@ -27,48 +45,23 @@ def get_single_key():
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         return ch
 
-# --- language detection helpers ---
 
+# ---------------------------------------------------------
+# Language detection helpers and keyword sets
+# ---------------------------------------------------------
 SWEDISH_START_WORDS = ("hej", "jag", "varför", "slut", "hejdå", "adjö", "svenska")
 ENGLISH_START_WORDS = ("hello", "hi", "hey", "why", "because", "i", "can", "are", "what", "how", "english")
 
 GOODBYES_EN = {"quit", "bye", "goodbye"}
 GOODBYES_SV = {"slut", "hejdå", "adjö"}
-QUIT_WORDS = GOODBYES_EN | GOODBYES_SV
+QUIT_WORDS = GOODBYES_EN | GOODBYES_SV  # either triggers exit
 
-FAREWELLS_EN = [
-    "Goodbye!",
-    "Bye!",
-    "See you!",
-    "Take care of yourself!",
-    "See you later, have a great day!",
-    "Catch you soon, don’t be a stranger!",
-    "Farewell, until we meet again!",
-    "Later, hope everything goes well for you!",
-    "Don’t do anything I wouldn’t do!",
-    "Logging off like a true 90s modem… goodbye!",
-    "May the Wi-Fi be with you!",
-    "See you in another timeline!",
-    "Vanishing dramatically… poof!"
-]
-
-FAREWELLS_SV = [
-    "Hejdå!",
-    "Adjö!",
-    "Vi ses!",
-    "Ha det bra och ta hand om dig!",
-    "Vi hörs senare, ha en fin dag!",
-    "På återseende, hoppas allt går bra för dig!",
-    "Ses snart, glöm inte att höra av dig!",
-    "Ha det gott tills vi ses igen!",
-    "Gör inget jag inte skulle göra!",
-    "Loggar ut som ett gammalt ICQ-konto… hej då!",
-    "Må Wi-fi:et vara med dig!",
-    "Vi ses i nästa liv!",
-    "Försvinner mystiskt i dimman… poff!"
-]
+# Fun exit phrases
+FAREWELLS_EN = ["Goodbye!", "See you later!", "Logging off like a true 90s modem… goodbye!", "May the Wi-Fi be with you!"]
+FAREWELLS_SV = ["Hejdå!", "Vi ses!", "Loggar ut som ett gammalt ICQ-konto… hej då!", "Må Wi-fi:et vara med dig!"]
 
 def has_swedish_markers(text_lower):
+    """Check if text has strong Swedish hints (letters, words, commands)."""
     if any(ch in text_lower for ch in "åäö"):
         return True
     if text_lower.startswith(SWEDISH_START_WORDS):
@@ -78,6 +71,7 @@ def has_swedish_markers(text_lower):
     return False
 
 def has_english_markers(text_lower):
+    """Check if text has strong English hints."""
     if text_lower.startswith(ENGLISH_START_WORDS):
         return True
     if re.search(r"\b(english|switch to english|/lang en)\b", text_lower):
@@ -85,7 +79,7 @@ def has_english_markers(text_lower):
     return False
 
 def parse_lang_command(text_lower):
-    # Explicit commands override everything
+    """Parse explicit /lang commands if present."""
     if text_lower.startswith(("/lang sv", "/language sv", "/lang svenska")) or "switch to swedish" in text_lower:
         return "sv"
     if text_lower.startswith(("/lang en", "/language en")) or "switch to english" in text_lower:
@@ -93,7 +87,7 @@ def parse_lang_command(text_lower):
     return None
 
 def detect_language_strong(text_lower):
-    # Strong hints only; returns "sv", "en", or None if ambiguous
+    """Return 'sv' or 'en' if strong cues detected, else None."""
     cmd = parse_lang_command(text_lower)
     if cmd:
         return cmd
@@ -104,7 +98,7 @@ def detect_language_strong(text_lower):
     return None
 
 def format_sentence(text):
-    """Return text with leading capital and terminal punctuation."""
+    """Capitalize first letter, ensure ending punctuation."""
     text = text.strip()
     if not text:
         return ""
@@ -113,79 +107,81 @@ def format_sentence(text):
         text += "."
     return text
 
-# --- TTS: per-call engine ---
+
+# ---------------------------------------------------------
+# Text-to-Speech helpers (pyttsx3, per-call engine)
+# ---------------------------------------------------------
 import sys
 import pyttsx3
 
-_voice_names = {"en": None, "sv": None}  # preferred substrings like "Zira", "Bengt"
-_voice_cache = {"en": None, "sv": None}  # resolved voice IDs
+_voice_names = {"en": None, "sv": None}   # preferred substrings ("Zira", "Bengt")
+_voice_cache = {"en": None, "sv": None}   # resolved IDs
 
 def _default_driver():
+    """Pick driver backend depending on OS."""
     if sys.platform.startswith("win"):
         return "sapi5"
     if sys.platform == "darwin":
         return "nsss"
-    return None  # Linux -> espeak
+    return None  # Linux defaults to espeak
 
 def tts_prepare(en_voice=None, sv_voice=None):
-    """Call once at startup to set preferred voices by substring."""
+    """Set preferred voices by name substring (called once at startup)."""
     _voice_names["en"] = en_voice
     _voice_names["sv"] = sv_voice
 
 def _resolve_voice_id(lang):
-    """Resolve and cache a voice id for a language."""
+    """Find and cache a voice ID for the given language."""
     if _voice_cache.get(lang):
         return _voice_cache[lang]
-
     engine = pyttsx3.init(driverName=_default_driver())
     voices = engine.getProperty("voices")
 
-    # try explicit substring
+    # Try explicit preferred name
     name_sub = _voice_names.get(lang)
     if name_sub:
-        sub = name_sub.lower()
         for v in voices:
-            if sub in v.name.lower():
+            if name_sub.lower() in v.name.lower():
                 _voice_cache[lang] = v.id
                 return v.id
 
-    # fallback: language hints
+    # Fallback: match language code hints
     hints = ("en", "eng", "english", "us", "gb") if lang == "en" else ("sv", "swe", "svenska", "swedish", "se")
     for v in voices:
         meta = (v.name + " " + v.id).lower()
         if any(h in meta for h in hints):
             _voice_cache[lang] = v.id
             return v.id
-
-    return None  # no match
+    return None
 
 def speak(text, lang="en", rate=175, volume=1.0):
-    """Speak text reliably by creating a fresh engine each call."""
+    """Speak text by creating a fresh engine each call."""
     engine = pyttsx3.init(driverName=_default_driver())
     engine.setProperty("rate", rate)
     engine.setProperty("volume", volume)
-
     vid = _resolve_voice_id(lang)
     if vid:
         engine.setProperty("voice", vid)
-
     engine.say(text)
     engine.runAndWait()
     engine.stop()
     del engine
-# --- end TTS ---
 
-# --- ASR: faster-whisper helpers ---
+
+# ---------------------------------------------------------
+# Automatic Speech Recognition (ASR) using faster-whisper
+# ---------------------------------------------------------
 _ASR_MODEL = None
 
 def asr_init(model_size="small", use_gpu=True):
+    """Load Whisper model into memory (choose GPU or CPU)."""
     device = "cuda" if use_gpu else "cpu"
     compute_type = "float16" if use_gpu else "int8"
     global _ASR_MODEL
     _ASR_MODEL = WhisperModel(model_size, device=device, compute_type=compute_type)
 
 def transcribe_audio_whisper(audio_mono_float32, lang_code):
-    # lang_code: "en" or "sv"
+    """Transcribe mono float32 audio array into text."""
     if _ASR_MODEL is None:
         asr_init()
     segments, _info = _ASR_MODEL.transcribe(
@@ -195,16 +191,20 @@ def transcribe_audio_whisper(audio_mono_float32, lang_code):
         vad_parameters=dict(min_silence_duration_ms=400)
     )
     return "".join(seg.text for seg in segments).strip()
-# --- end ASR ---
 
-# --- Push-to-talk recording: hold SPACE to talk ---
+
+# ---------------------------------------------------------
+# Push-to-talk audio capture (hold SPACE to record)
+# ---------------------------------------------------------
 def record_while_holding_space(
-    wait_timeout=10,        # seconds to wait for first SPACE press
-    max_seconds=12,         # max capture duration while holding
-    samplerate=16000,
-    blocksize=1024,
+    wait_timeout=10, max_seconds=12,
+    samplerate=16000, blocksize=1024,
     already_pressed=False,
 ):
+    """
+    Record microphone input while SPACE is held down.
+    Returns: float32 numpy array with recorded samples.
+    """
     q = queue.Queue()
     listening = threading.Event()
     started = threading.Event()
@@ -228,10 +228,8 @@ def record_while_holding_space(
 
     with sd.InputStream(samplerate=samplerate, channels=1, dtype="float32",
                         blocksize=blocksize, callback=callback):
-        with keyboard.Listener(
-            on_press=None if already_pressed else on_press,
-            on_release=on_release,
-        ) as listener:
+        with keyboard.Listener(on_press=None if already_pressed else on_press,
+                               on_release=on_release) as listener:
             if already_pressed:
                 listening.set()
                 started.set()
@@ -242,14 +240,11 @@ def record_while_holding_space(
             done.wait(max_seconds)
             listener.stop()
 
-    # collect audio chunks
+    # Collect audio frames into one array
     frames = []
     while not q.empty():
         frames.append(q.get())
-    if not frames:
-        return np.array([], dtype="float32")
-    return np.concatenate(frames).flatten()
-# --- end PTT ---
+    return np.concatenate(frames).flatten() if frames else np.array([], dtype="float32")
 
 
 # --- ELIZA bot ---
@@ -663,9 +658,11 @@ class Eliza:
         }
 
     def get_active_rules(self):
+        """Return language-specific response rules."""
         return self.responses_swedish if self.language == "sv" else self.responses_english
 
     def respond(self, user_statement):
+        """Generate ELIZA-style reply based on regex pattern matching."""
         for regex_pattern, possible_replies in self.get_active_rules():
             match = re.search(regex_pattern, user_statement, re.IGNORECASE)
             if match:
@@ -675,20 +672,27 @@ class Eliza:
         return "I'm not sure I understand you fully." if self.language == "en" else "Jag är inte säker på att jag förstår dig helt."
 
     def reflect_text(self, fragment):
+        """Flip pronouns/perspective (e.g., 'I' -> 'you')."""
         if fragment is None:
             return ""
         words = re.findall(r"\b[\wåäöÅÄÖ']+\b", fragment.lower())
         reflected = [self.reflections.get(w, w) for w in words]
         return " ".join(reflected)
 
+
+# ---------------------------------------------------------
+# Input/output helpers
+# ---------------------------------------------------------
 def lang_to_bcp47(active_language):
+    """Convert 'en'/'sv' to full language tag (used for TTS)."""
     return "sv-SE" if active_language == "sv" else "en-US"
 
 def get_user_input(active_language):
-    """Return user's raw and lowercased text from typing or speech."""
+    """Get user input: typed or spoken (push-to-talk)."""
     print("> ", end="", flush=True)
     first = get_single_key()
 
+    # Speech input
     if first == " ":
         audio = record_while_holding_space(already_pressed=True)
         if audio.size == 0:
@@ -702,7 +706,7 @@ def get_user_input(active_language):
         print(format_sentence(raw))
         return raw, raw.lower()
 
-    # typed input
+    # Typed input
     print(first, end="", flush=True)
     rest = sys.stdin.readline()
     raw = (first + rest).strip()
@@ -710,29 +714,38 @@ def get_user_input(active_language):
         return None
     return raw, raw.lower()
 
+
+# ---------------------------------------------------------
+# Main program loop
+# ---------------------------------------------------------
 def main():
     session_number = 1
+    tts_prepare(en_voice="Zira", sv_voice="Bengt")  # Pick voices
 
-    # TTS voice selection
-    tts_prepare(en_voice="Zira", sv_voice="Bengt")
-
+    # GPU check for Whisper
     import importlib
-
     torch_spec = importlib.util.find_spec("torch")
+    use_gpu = False
     if torch_spec:
         torch = importlib.import_module("torch")
         use_gpu = torch.cuda.is_available()
-    else:
-        use_gpu = False
 
-    asr_init(model_size="medium", use_gpu=use_gpu)  # set False if no GPU
+    # Initialize ASR model
+    asr_init(model_size="small", use_gpu=use_gpu)
+
+# Available models: tiny, base, small, medium, large-v2.
+
+# Smaller = faster but less accurate.
+# Larger = slower but more accurate.
+
+
 
     active_language = "en"
     eliza_bot = Eliza(language=active_language)
 
     while True:
         print(f"--- Session {session_number} ---")
-        print("Hello ! Hold SPACE to talk or start typing to write. Say 'quit' or 'slut' to exit.")
+        print("Hello! Hold SPACE to talk or type to write. Say 'quit'/'slut' to exit.")
         active_language = "en"
         eliza_bot = Eliza(language=active_language)
 
@@ -742,32 +755,30 @@ def main():
                 continue
             user_text_raw, user_text = user_data
 
-            # Allow exit words in either mode
+            # Exit check
             words = re.findall(r"\b[\wåäö]+\b", user_text)
             if any(w in QUIT_WORDS for w in words):
                 farewells = FAREWELLS_SV if active_language == "sv" else FAREWELLS_EN
                 farewell = format_sentence(random.choice(farewells))
                 print("ELIZA:", farewell)
                 speak(farewell, lang=active_language)
-
-                # wait a little before clearing
                 time.sleep(2)
-
-                # clear terminal (works on Windows, macOS, Linux)
                 os.system("cls" if os.name == "nt" else "clear")
                 break
 
-            # Sticky language: only switch on strong cues
+            # Switch language if strong cues
             strong = detect_language_strong(user_text)
             if strong and strong != active_language:
                 active_language = strong
                 eliza_bot.language = active_language
 
+            # Respond via ELIZA
             reply = format_sentence(eliza_bot.respond(user_text))
             print(f"ELIZA: {reply}")
             speak(reply, lang=active_language)
 
         session_number += 1
+
 
 if __name__ == "__main__":
     main()
