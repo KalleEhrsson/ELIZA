@@ -57,8 +57,37 @@ GOODBYES_SV = {"slut", "hejdå", "adjö"}
 QUIT_WORDS = GOODBYES_EN | GOODBYES_SV  # either triggers exit
 
 # Fun exit phrases
-FAREWELLS_EN = ["Goodbye!", "See you later!", "Logging off like a true 90s modem… goodbye!", "May the Wi-Fi be with you!"]
-FAREWELLS_SV = ["Hejdå!", "Vi ses!", "Loggar ut som ett gammalt ICQ-konto… hej då!", "Må Wi-fi:et vara med dig!"]
+FAREWELLS_EN = [
+    "Goodbye!",
+    "Bye!",
+    "See you!",
+    "Take care of yourself!",
+    "See you later, have a great day!",
+    "Catch you soon, don’t be a stranger!",
+    "Farewell, until we meet again!",
+    "Later, hope everything goes well for you!",
+    "Don’t do anything I wouldn’t do!",
+    "Logging off like a true 90s modem… goodbye!",
+    "May the Wi-Fi be with you!",
+    "See you in another timeline!",
+    "Vanishing dramatically… poof!"
+]
+
+FAREWELLS_SV = [
+    "Hejdå!",
+    "Adjö!",
+    "Vi ses!",
+    "Ha det bra och ta hand om dig!",
+    "Vi hörs senare, ha en fin dag!",
+    "På återseende, hoppas allt går bra för dig!",
+    "Ses snart, glöm inte att höra av dig!",
+    "Ha det gott tills vi ses igen!",
+    "Gör inget jag inte skulle göra!",
+    "Loggar ut som ett gammalt ICQ-konto… hej då!",
+    "Må Wi-fi:et vara med dig!",
+    "Vi ses i nästa liv!",
+    "Försvinner mystiskt i dimman… poff!"
+]
 
 def has_swedish_markers(text_lower):
     """Check if text has strong Swedish hints (letters, words, commands)."""
