@@ -782,18 +782,18 @@ def main():
 
 # Clear any setup output before showing user prompts
     os.system("cls" if os.name == "nt" else "clear")
-    print(
-                                "WELCOME TO\n"
+    print("""
+                             WELCOME TO
 
-        "\nEEEEEEEE       LLL         IIIII          ZZZZZZZ       AAAAAAA\n"
-        "EEEEEEEE       LLL          III              ZZZ       AAA   AAA\n"
-        "EEE            LLL          III             ZZZ        AAA   AAA\n"
-        "EEEEEEE        LLL          III            ZZZ         AAAAAAAAA\n"
-        "EEEEEEE        LLL          III           ZZZ          AAAAAAAAA\n"
-        "EEE            LLL          III          ZZZ           AAA   AAA\n"
-        "EEEEEEE        LLLLLLL      III         ZZZ            AAA   AAA\n"
-        "EEEEEEE        LLLLLLL     IIIII       ZZZZZZZ         AAA   AAA\n"
-    )
+    EEEEEEEE       LLL         IIIII          ZZZZZZZ       AAAAAAA
+    EEEEEEEE       LLL          III              ZZZ       AAA   AAA
+    EEE            LLL          III             ZZZ        AAA   AAA
+    EEEEEEE        LLL          III            ZZZ         AAAAAAAAA
+    EEEEEEE        LLL          III           ZZZ          AAAAAAAAA
+    EEE            LLL          III          ZZZ           AAA   AAA
+    EEEEEEE        LLLLLLL      III         ZZZ            AAA   AAA
+    EEEEEEE        LLLLLLL     IIIII       ZZZZZZZ         AAA   AAA
+    """)
 
 
     while True:
