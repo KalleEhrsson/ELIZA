@@ -777,17 +777,28 @@ def main():
 
 # Smaller = faster but less accurate.
 # Larger = slower but more accurate.
-
-
-
     active_language = "en"
     eliza_bot = Eliza(language=active_language)
 
 # Clear any setup output before showing user prompts
     os.system("cls" if os.name == "nt" else "clear")
+    print(
+                                "WELCOME TO\n"
+
+        "\nEEEEEEEE       LLL         IIIII          ZZZZZZZ       AAAAAAA\n"
+        "EEEEEEEE       LLL          III              ZZZ       AAA   AAA\n"
+        "EEE            LLL          III             ZZZ        AAA   AAA\n"
+        "EEEEEEE        LLL          III            ZZZ         AAAAAAAAA\n"
+        "EEEEEEE        LLL          III           ZZZ          AAAAAAAAA\n"
+        "EEE            LLL          III          ZZZ           AAA   AAA\n"
+        "EEEEEEE        LLLLLLL      III         ZZZ            AAA   AAA\n"
+        "EEEEEEE        LLLLLLL     IIIII       ZZZZZZZ         AAA   AAA\n"
+    )
+
 
     while True:
         print(f"--- Session {session_number} ---")
+        session_number += 1
         print("Hello! Hold SPACE to talk or type to write. Say 'quit'/'slut' to exit.")
         active_language = "en"
         eliza_bot = Eliza(language=active_language)
@@ -820,7 +831,6 @@ def main():
             print(f"ELIZA: {reply}")
             speak(reply, lang=active_language)
 
-        session_number += 1
 
 
 if __name__ == "__main__":
