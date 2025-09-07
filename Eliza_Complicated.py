@@ -17,7 +17,7 @@ Main flow:
 import re
 import random
 import os, time
-
+import sys, termios, tty
 import numpy as np
 import sounddevice as sd
 import queue, threading, time
@@ -58,6 +58,49 @@ def flush_input_buffer():
         import sys
         import termios
         termios.tcflush(sys.stdin, termios.TCIFLUSH)
+
+def colored_input(prompt, first_char=None, color=Fore.GREEN):
+    """Read a line of input with live colored echo and backspace support."""
+    print(color + prompt, end="", flush=True)
+    buf = []
+    if first_char is not None:
+        buf.append(first_char)
+        print(first_char, end="", flush=True)
+    try:
+        import msvcrt  # Windows
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                print(Style.RESET_ALL)
+                break
+            if ch == "\x08":  # backspace
+                if buf:
+                    buf.pop()
+                    print("\b \b", end="", flush=True)
+            else:
+                buf.append(ch)
+                print(ch, end="", flush=True)
+    except Exception:  # Unix-like
+        import sys, termios, tty
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            while True:
+                ch = sys.stdin.read(1)
+                if ch in ("\n", "\r"):
+                    print(Style.RESET_ALL)
+                    break
+                if ch == "\x7f":  # backspace
+                    if buf:
+                        buf.pop()
+                        print("\b \b", end="", flush=True)
+                else:
+                    buf.append(ch)
+                    print(ch, end="", flush=True)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    return "".join(buf)
 
 # ---------------------------------------------------------
 # Language detection helpers and keyword sets
@@ -731,8 +774,7 @@ def lang_to_bcp47(active_language):
     return "sv-SE" if active_language == "sv" else "en-US"
 
 def get_user_input(active_language):
-    """Get user input: typed or spoken (push-to-talk)."""
-    print("> ", end="", flush=True)
+    """Get user input: typed (live-colored) or spoken."""
     first = get_single_key()
 
     # Speech input
@@ -746,12 +788,11 @@ def get_user_input(active_language):
         if not raw:
             print("(didn't catch that)")
             return None
+        print(f"{Fore.GREEN}USER: {format_sentence(raw)}{Style.RESET_ALL}")
         return raw, raw.lower()
 
-    # Typed input
-    print(first, end="", flush=True)
-    rest = sys.stdin.readline()
-    raw = (first + rest).strip()
+    # Typed input with live color
+    raw = colored_input("USER: ", first_char=first, color=Fore.GREEN).strip()
     if not raw:
         return None
     return raw, raw.lower()
@@ -811,7 +852,6 @@ def main():
             if user_data is None:
                 continue
             user_text_raw, user_text = user_data
-            print(f"{Fore.GREEN}USER: {format_sentence(user_text_raw)}{Style.RESET_ALL}")
 
             # Exit check
             words = re.findall(r"\b[\wåäö]+\b", user_text)
@@ -834,7 +874,7 @@ def main():
 
             # Respond via ELIZA
             reply = format_sentence(eliza_bot.respond(user_text))
-            print(f"{Fore.CYAN}ELIZA: {reply}{Style.RESET_ALL}")
+            print(f"{Fore.CYAN} [{active_language.upper()}]ELIZA: {reply}{Style.RESET_ALL}")
             speak(reply, lang=active_language)
 
 if __name__ == "__main__":
