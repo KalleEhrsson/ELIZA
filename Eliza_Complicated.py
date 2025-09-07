@@ -21,8 +21,11 @@ import os, time
 import numpy as np
 import sounddevice as sd
 import queue, threading, time
+
 from faster_whisper import WhisperModel
 from pynput import keyboard
+from colorama import init as colorama_init, Fore, Style
+colorama_init()
 
 # ---------------------------------------------------------
 # Single-key input helper (for detecting SPACE quickly)
@@ -212,7 +215,7 @@ def speak(text, lang="en", rate=175, volume=1.0):
 # ---------------------------------------------------------
 _ASR_MODEL = None
 
-def asr_init(model_size="mediam", use_gpu=True):
+def asr_init(model_size="medium", use_gpu=True):
     """Load Whisper model into memory (choose GPU or CPU)."""
     device = "cuda" if use_gpu else "cpu"
     compute_type = "float16" if use_gpu else "int8"
@@ -743,7 +746,6 @@ def get_user_input(active_language):
         if not raw:
             print("(didn't catch that)")
             return None
-        print(format_sentence(raw))
         return raw, raw.lower()
 
     # Typed input
@@ -780,9 +782,10 @@ def main():
     active_language = "en"
     eliza_bot = Eliza(language=active_language)
 
+    while True:
 # Clear any setup output before showing user prompts
-    os.system("cls" if os.name == "nt" else "clear")
-    print("""
+        os.system("cls" if os.name == "nt" else "clear")
+        print("""
                              WELCOME TO
 
     EEEEEEEE       LLL         IIIII          ZZZZZZZ       AAAAAAA
@@ -793,10 +796,10 @@ def main():
     EEE            LLL          III          ZZZ           AAA   AAA
     EEEEEEE        LLLLLLL      III         ZZZ            AAA   AAA
     EEEEEEE        LLLLLLL     IIIII       ZZZZZZZ         AAA   AAA
+              
+    Your friendly voice-enabled ELIZA chatbot!
     """)
-
-
-    while True:
+    
         print(f"--- Session {session_number} ---")
         session_number += 1
         print("Hello! Hold SPACE to talk or type to write. Say 'quit'/'slut' to exit.")
@@ -808,17 +811,20 @@ def main():
             if user_data is None:
                 continue
             user_text_raw, user_text = user_data
+            print(f"{Fore.GREEN}USER: {format_sentence(user_text_raw)}{Style.RESET_ALL}")
 
             # Exit check
             words = re.findall(r"\b[\wåäö]+\b", user_text)
             if any(w in QUIT_WORDS for w in words):
                 farewells = FAREWELLS_SV if active_language == "sv" else FAREWELLS_EN
                 farewell = format_sentence(random.choice(farewells))
-                print("ELIZA:", farewell)
+                print(f"{Fore.CYAN}ELIZA: {farewell}{Style.RESET_ALL}")
                 speak(farewell, lang=active_language)
                 time.sleep(2)
                 os.system("cls" if os.name == "nt" else "clear")
                 break
+
+            
 
             # Switch language if strong cues
             strong = detect_language_strong(user_text)
@@ -828,10 +834,8 @@ def main():
 
             # Respond via ELIZA
             reply = format_sentence(eliza_bot.respond(user_text))
-            print(f"ELIZA: {reply}")
+            print(f"{Fore.CYAN}ELIZA: {reply}{Style.RESET_ALL}")
             speak(reply, lang=active_language)
-
-
 
 if __name__ == "__main__":
     main()
