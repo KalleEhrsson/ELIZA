@@ -17,7 +17,6 @@ Main flow:
 import re
 import random
 import os, time
-import sys, termios, tty
 import numpy as np
 import sounddevice as sd
 import queue, threading, time
@@ -874,7 +873,7 @@ def main():
 
             # Respond via ELIZA
             reply = format_sentence(eliza_bot.respond(user_text))
-            print(f"{Fore.CYAN} [{active_language.upper()}]ELIZA: {reply}{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}[{active_language.upper()}] ELIZA: {reply}{Style.RESET_ALL}")
             speak(reply, lang=active_language)
 
 if __name__ == "__main__":
