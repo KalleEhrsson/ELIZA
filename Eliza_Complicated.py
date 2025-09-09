@@ -20,9 +20,23 @@ import os, time
 import numpy as np
 import sounddevice as sd
 import queue, threading, time
+import sys
+import pyttsx3
+import importlib
+
+# Platform-specific imports
+if os.name == "nt":  # Windows
+    import msvcrt
+else:  # Unix-like (Linux, macOS)
+    import termios, tty
 
 from faster_whisper import WhisperModel
 from pynput import keyboard
+
+# Spellcheckers
+from spellchecker import SpellChecker
+from rapidfuzz import process
+
 from colorama import init as colorama_init, Fore, Style
 colorama_init()
 
@@ -32,12 +46,8 @@ colorama_init()
 def get_single_key():
     """Read a single keypress without waiting for Enter (cross-platform)."""
     try:
-        import msvcrt  # Windows
         return msvcrt.getwch()
     except Exception:  # Unix-like
-        import sys
-        import termios
-        import tty
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         try:
@@ -50,12 +60,9 @@ def get_single_key():
 def flush_input_buffer():
     """Clear any pending keyboard input to avoid unintended repeats."""
     try:
-        import msvcrt  # Windows
         while msvcrt.kbhit():
             msvcrt.getwch()
     except Exception:  # Unix-like
-        import sys
-        import termios
         termios.tcflush(sys.stdin, termios.TCIFLUSH)
 
 def colored_input(prompt, first_char=None, color=Fore.GREEN):
@@ -66,7 +73,6 @@ def colored_input(prompt, first_char=None, color=Fore.GREEN):
         buf.append(first_char)
         print(first_char, end="", flush=True)
     try:
-        import msvcrt  # Windows
         while True:
             ch = msvcrt.getwch()
             if ch in ("\r", "\n"):
@@ -80,7 +86,6 @@ def colored_input(prompt, first_char=None, color=Fore.GREEN):
                 buf.append(ch)
                 print(ch, end="", flush=True)
     except Exception:  # Unix-like
-        import sys, termios, tty
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         try:
@@ -104,51 +109,353 @@ def colored_input(prompt, first_char=None, color=Fore.GREEN):
 # ---------------------------------------------------------
 # Language detection helpers and keyword sets
 # ---------------------------------------------------------
-SWEDISH_START_WORDS = ("hej", "jag", "varför", "slut", "hejdå", "adjö", "svenska")
-ENGLISH_START_WORDS = ("hello", "hi", "hey", "why", "because", "i", "can", "are", "what", "how", "english")
+SWEDISH_RECOGNITION_WORDS = [
+    # Pronouns
+    "jag", "du", "ni", "vi", "han", "hon", "den", "det", "de", "dom",
+    "mig", "dig", "honom", "henne", "oss", "man", "min", "mitt", "mina",
+    "din", "ditt", "dina", "sin", "sitt", "sina", "hans", "hennes", "deras",
 
-GOODBYES_EN = {"quit", "bye", "goodbye"}
-GOODBYES_SV = {"slut", "hejdå", "adjö"}
-QUIT_WORDS = GOODBYES_EN | GOODBYES_SV  # either triggers exit
+    # Question words
+    "vad", "vem", "vilken", "vilket", "vilka", "hur", "nar", "var", "vart",
+
+    # Common verbs
+    "ar", "var", "blir", "blev", "finns", "fanns", "gora", "gjorde", "gor",
+    "kommer", "kom", "sager", "sa", "tycker", "tyckte", "tror", "trodde",
+    "vill", "ville", "kan", "kunde", "maste", "skulle", "ska", "bor", "borde",
+    "far", "fick", "ger", "gav", "tar", "tog", "ser", "sag", "vet", "visste",
+    "kanner", "kande", "borjar", "borjade", "slutar", "slutade",
+
+    # Adverbs / Particles
+    "inte", "ja", "nej", "kanske", "redan", "aldrig", "alltid", "ofta", "sallan",
+    "snart", "nyss", "igen", "hittills", "dessutom", "fast", "dock",
+    "ju", "val", "nog", "bara",
+
+    # Conjunctions
+    "men", "eller", "utan", "eftersom", "innan", "efter", "sa", "for", "medan", "om", "och", "att",
+
+    # Everyday nouns
+    "dag", "natt", "morgon", "kvall", "timme", "minut", "sekund",
+    "vecka", "manad", "liv", "tid", "framtid",
+    "hem", "hus", "rum", "dorr", "fonster", "golv", "tak",
+    "skola", "arbete", "jobb", "pengar", "bil", "cykel", "tag", "buss",
+    "barn", "vuxen", "kvinna", "man", "kompis", "van",
+
+    # Food & basics
+    "mat", "vatten", "mjolk", "kaffe", "te", "brod", "ost", "socker", "salt",
+
+    # Places
+    "sverige", "svensk", "stockholm", "malmo", "goteborg"
+]
+
+ENGLISH_RECOGNITION_WORDS = [
+    # Pronouns
+    "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
+    "my", "your", "his", "its", "our", "their", "mine", "yours", "ours", "theirs",
+
+    # Question words
+    "what", "who", "which", "when", "where", "why", "how",
+
+    # Common verbs
+    "be", "am", "is", "are", "was", "were", "being", "been",
+    "have", "has", "had", "do", "does", "did", "done",
+    "can", "could", "will", "would", "shall", "should", "may", "might", "must",
+    "go", "went", "gone", "get", "got", "make", "made", "say", "said",
+    "see", "saw", "know", "knew", "think", "thought", "want", "wanted",
+
+    # Adverbs / Particles
+    "not", "yes", "no", "maybe", "always", "never", "often", "sometimes",
+    "soon", "again", "just", "already", "still",
+
+    # Conjunctions
+    "and", "or", "but", "because", "if", "while", "though", "although", "since", "until", "so", "than",
+
+    # Everyday nouns
+    "day", "night", "morning", "evening", "time", "year", "month", "week",
+    "man", "woman", "child", "friend", "people", "house", "home", "room",
+    "school", "work", "job", "money", "car", "bus", "train", "food", "water",
+
+    # Food & basics
+    "bread", "milk", "coffee", "tea", "sugar", "salt",
+
+    # Places
+    "england", "english", "london", "america", "american", "new", "york"
+]
+
+# Exit words (either English or Swedish triggers exit)
+GOODBYES_EN = {
+    "quit", "bye", "goodbye", "good bye", "bye bye",
+    "see you", "see ya", "later", "cya", "catch you later",
+    "take care", "farewell", "so long", "exit", "end"
+}
+
+GOODBYES_SV = {
+    "slut", "hejdå", "hej då", "adjö", "adjöss",
+    "vi ses", "ses", "på återseende", "ta hand om dig",
+    "ha det", "ha det bra", "sköt om dig", "farväl", "slut på samtal"
+}
+
+QUIT_WORDS = GOODBYES_EN | GOODBYES_SV
+
+EN_FILLERS = [
+    "uh", "um", "hmm", "like", "well"
+    ]
+
+SV_FILLERS = [
+    "eh", "asså", "hmm", "liksom", "typ"
+    ]
+
+QWERTY_NEIGHBORS = {
+    "a":"sqwz", "b":"vghn", "c":"xdfv", "d":"ersfcx", "e":"wrsd",
+    "f":"drtgcv", "g":"ftyhbv", "h":"gyujnb", "i":"ujko", "j":"huikmn",
+    "k":"jiolm", "l":"kop", "m":"njk", "n":"bhjm", "o":"iklp", "p":"ol",
+    "q":"wa", "r":"tfde", "s":"awedxz", "t":"ryfg", "u":"yihj", "v":"cfgb",
+    "w":"qes", "x":"zsdc", "y":"tugh", "z":"xs", "'":"", "-":""
+}
 
 # Fun exit phrases
 FAREWELLS_EN = [
-    "Goodbye!",
-    "Bye!",
-    "See you!",
-    "Take care of yourself!",
-    "See you later, have a great day!",
-    "Catch you soon, don’t be a stranger!",
-    "Farewell, until we meet again!",
-    "Later, hope everything goes well for you!",
-    "Don’t do anything I wouldn’t do!",
     "Logging off like a true 90s modem… goodbye!",
     "May the Wi-Fi be with you!",
     "See you in another timeline!",
-    "Vanishing dramatically… poof!"
+    "Vanishing dramatically… poof!",
+    "Ctrl + Alt + Bye!",
+    "Powering down human interface…",
+    "Closing all tabs, including this one!",
+    "Teleporting to another chat dimension…",
+    "Unsubscribing from reality for today!",
+    "Alt+F4’ing out of existence…"
 ]
 
 FAREWELLS_SV = [
-    "Hejdå!",
-    "Adjö!",
-    "Vi ses!",
-    "Ha det bra och ta hand om dig!",
-    "Vi hörs senare, ha en fin dag!",
-    "På återseende, hoppas allt går bra för dig!",
-    "Ses snart, glöm inte att höra av dig!",
-    "Ha det gott tills vi ses igen!",
-    "Gör inget jag inte skulle göra!",
     "Loggar ut som ett gammalt ICQ-konto… hej då!",
     "Må Wi-fi:et vara med dig!",
     "Vi ses i nästa liv!",
-    "Försvinner mystiskt i dimman… poff!"
+    "Försvinner mystiskt i dimman… poff!",
+    "Ctrl + Alt + Hej då!",
+    "Stänger alla flikar, även denna!",
+    "Loggar ut ur verkligheten för idag!",
+    "Alt+F4:ar mig bort från samtalet…",
+    "Teleporteras till en annan dimension!",
 ]
+
+
+# Try to load a user-maintained Swedish wordlist if present
+def _load_swedish_vocab():
+    core = {
+        # very common function words + forms (kept small; add more in file)
+        "jag","du","han","hon","vi","ni","de","dom","mig","dig","oss","er",
+        "min","mitt","mina","din","ditt","dina","sin","sitt","sina","hans","hennes","deras",
+        "inte","ja","nej","kanske","och","att","men","eller","utan","eftersom","innan","efter","om","för","så",
+        "är","var","bli","blir","blev","finns","gör","gjorde","kommer","kom","säger","sa",
+        "kan","kunde","vill","ville","måste","ska","skulle","bör","borde","får","fick","tar","tog","ser","såg","vet","visste",
+        "hej","tack","snälla","alltid","aldrig","ofta","sällan","snart","igen","redan",
+        "dag","natt","morgon","kväll","vecka","månad","år","tid","framtid","hem","hus","rum","dörr","fönster",
+        "skola","arbete","jobb","pengar","bil","tåg","buss",
+        "barn","vuxen","kvinna","man","kompis","vän",
+        "mat","vatten","mjölk","kaffe","te","bröd","ost","socker","salt",
+        "sverige","svensk","stockholm","göteborg","malmö",
+        # common adjectives/feelings
+        "trött","ledsen","glad","orolig","arg","rädd","stressad","lugnt","svårt","lätt",
+    }
+
+    # If file exists, merge its lines
+    path = os.path.join(os.path.dirname(__file__), "swedish_words.txt")
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                file_words = {w.strip().lower() for w in f if w.strip()}
+                core |= file_words
+        except Exception:
+            pass
+    return core
+
+SWEDISH_VOCAB = _load_swedish_vocab()
+
+def correct_word_sv(word, threshold=88):
+    # skip very short or non-alpha
+    w = word.strip()
+    if len(w) < 3 or not any(ch.isalpha() for ch in w):
+        return word
+    # if already in vocab, keep
+    if w in SWEDISH_VOCAB:
+        return word
+    # candidate from vocab
+    match = process.extractOne(w, SWEDISH_VOCAB)
+    if not match:
+        return word
+    cand, score, _ = match
+    # only replace if very similar and different
+    return cand if score >= threshold and cand != w else word
+
+def correct_swedish_text(text):
+    # keep punctuation spacing; operate per token
+    tokens = re.findall(r"\w+|[^\w\s]", text, flags=re.UNICODE)
+    out = []
+    for t in tokens:
+        if re.match(r"^\w+$", t, flags=re.UNICODE):
+            out.append(correct_word_sv(t.lower()))
+        else:
+            out.append(t)
+    return "".join([
+        # reinsert a space if joining two alnum tokens without punctuation
+        ((" " if i and out[i-1].isalnum() and tok.isalnum() else "") + tok)
+        for i, tok in enumerate(out)
+    ])
+
+
+def normalize_and_spellcheck(text, lang="en"):
+    # Step 1: normalize slang and contractions
+    text = normalize_input(text)
+
+    if lang == "en":
+        # Step 2: pyspellchecker (English)
+        words = text.split()
+        fixed = [spell_en.correction(w) if w not in spell_en else w for w in words]
+        return " ".join(fixed)
+
+    elif lang == "sv":
+        # Step 2: Swedish fuzzy correction
+        return correct_swedish_text(text)
+
+    return text
+
+spell_en = SpellChecker(language="en")
+# For Swedish, provide your own dictionary file with common words:
+# spell_sv = SpellChecker(language=None, local_dictionary="swedish_words.txt")
+
+def auto_correct(text, lang="en"):
+    spell = spell_en  # or spell_sv if you're handling Swedish
+    words = text.split()
+    corrected = []
+    for w in words:
+        if w in spell:  # known word
+            corrected.append(w)
+        else:
+            correction = spell.correction(w)
+            corrected.append(correction if correction else w)
+    return " ".join(corrected)
+
+def _word_safe_for_typo(w):
+    if len(w) < 4: return False
+    if re.fullmatch(r"[^\wåäöÅÄÖ]+", w): return False
+    return True
+
+def _apply_typo(w):
+    w_core = w
+    pre = ""
+    post = ""
+    m = re.match(r"^([\"'(\[]?)(.*?)([\"')\].,!?:;…]*)$", w, re.UNICODE)
+    if m:
+        pre, w_core, post = m.groups()
+
+    if len(w_core) < 4:
+        return w  # too short
+
+    ops = []
+    ops.append("drop")
+    ops.append("swap")
+    ops.append("dup")
+    if any(c.isalpha() for c in w_core):
+        ops.append("near")
+
+    op = random.choice(ops)
+    s = list(w_core)
+
+    if op == "drop":
+        i = random.randrange(1, len(s)-1)
+        del s[i]
+    elif op == "swap" and len(s) >= 4:
+        i = random.randrange(1, len(s)-2)
+        s[i], s[i+1] = s[i+1], s[i]
+    elif op == "dup":
+        i = random.randrange(1, len(s)-1)
+        s.insert(i, s[i])
+    elif op == "near":
+        i = random.randrange(1, len(s)-1)
+        c = s[i].lower()
+        if c in QWERTY_NEIGHBORS and QWERTY_NEIGHBORS[c]:
+            s[i] = random.choice(QWERTY_NEIGHBORS[c])
+    w_new = "".join(s)
+
+    # keep capitalization shape of first char
+    if w_core[0].isupper():
+        w_new = w_new[0].upper() + w_new[1:]
+
+    return pre + w_new + post
+
+def _insert_filler(text, lang):
+    fillers = EN_FILLERS if lang == "en" else SV_FILLERS
+    f = random.choice(fillers)
+
+    # 50% put at start, else insert mid-sentence
+    if random.random() < 0.5:
+        return f + ", " + text
+    # mid insert before a random comma or just before last clause
+    parts = re.split(r"(,|\band\b|\boch\b)", text, maxsplit=1)
+    if len(parts) > 1:
+        return parts[0].strip() + ", " + f + " " + "".join(parts[1:]).lstrip()
+    return f + "… " + text
+
+def _light_style_tweaks(text, lang):
+    # small human quirks
+    t = text
+
+    # EN: sometimes lowercase "I", sometimes drop an apostrophe
+    if lang == "en":
+        if random.random() < 0.15:
+            t = re.sub(r"\bI\b", "i", t)
+        if random.random() < 0.12:
+            t = t.replace("don't", "dont").replace("can't", "cant").replace("I'm", "Im")
+
+    # SV: casual particles
+    if lang == "sv":
+        if random.random() < 0.12:
+            t = t.replace(" Jag ", " Asså jag ").replace(" jag ", " asså jag ")
+        if random.random() < 0.1:
+            t = re.sub(r"\binte\b", "inte riktigt", t, count=1)
+
+    # occasional triple dots or spaced ellipsis
+    if random.random() < 0.15:
+        t = re.sub(r"[.?!]$", "…", t)
+    return t
+
+def humanize_text(text, lang="en",
+                  typo_prob=0.22,    # chance to add typos
+                  max_typos=2,
+                  filler_prob=0.18,  # chance to add a filler
+                  style_prob=0.25):  # chance to add small style quirks
+    txt = text
+
+    # fillers
+    if random.random() < filler_prob:
+        txt = _insert_filler(txt, lang)
+
+    # typos
+    if random.random() < typo_prob:
+        words = txt.split()
+        if len(words) >= 4:
+            # avoid first/last word for readability
+            indices = [i for i in range(1, len(words)-1) if _word_safe_for_typo(words[i])]
+            random.shuffle(indices)
+            applied = 0
+            for i in indices:
+                words[i] = _apply_typo(words[i])
+                applied += 1
+                if applied >= max_typos:
+                    break
+            txt = " ".join(words)
+
+    # small casual style tweaks
+    if random.random() < style_prob:
+        txt = _light_style_tweaks(txt, lang)
+
+    return txt
 
 def has_swedish_markers(text_lower):
     """Check if text has strong Swedish hints (letters, words, commands)."""
     if any(ch in text_lower for ch in "åäö"):
         return True
-    if text_lower.startswith(SWEDISH_START_WORDS):
+    if any(re.search(rf"\b{word}\b", text_lower) for word in SWEDISH_RECOGNITION_WORDS ):
         return True
     if re.search(r"\b(svenska|byta till svenska|switch to swedish)\b", text_lower):
         return True
@@ -156,7 +463,7 @@ def has_swedish_markers(text_lower):
 
 def has_english_markers(text_lower):
     """Check if text has strong English hints."""
-    if text_lower.startswith(ENGLISH_START_WORDS):
+    if any(re.search(rf"\b{word}\b", text_lower) for word in ENGLISH_RECOGNITION_WORDS):
         return True
     if re.search(r"\b(english|switch to english|/lang en)\b", text_lower):
         return True
@@ -191,13 +498,9 @@ def format_sentence(text):
         text += "."
     return text
 
-
 # ---------------------------------------------------------
 # Text-to-Speech helpers (pyttsx3, per-call engine)
 # ---------------------------------------------------------
-import sys
-import pyttsx3
-
 _voice_names = {"en": None, "sv": None}   # preferred substrings ("Zira", "Bengt")
 _voice_cache = {"en": None, "sv": None}   # resolved IDs
 
@@ -251,7 +554,6 @@ def speak(text, lang="en", rate=175, volume=1.0):
     engine.stop()
     del engine
 
-
 # ---------------------------------------------------------
 # Automatic Speech Recognition (ASR) using faster-whisper
 # ---------------------------------------------------------
@@ -275,7 +577,6 @@ def transcribe_audio_whisper(audio_mono_float32, lang_code):
         vad_parameters=dict(min_silence_duration_ms=400)
     )
     return "".join(seg.text for seg in segments).strip()
-
 
 # ---------------------------------------------------------
 # Push-to-talk audio capture (hold SPACE to record)
@@ -330,7 +631,6 @@ def record_while_holding_space(
         frames.append(q.get())
         flush_input_buffer()
     return np.concatenate(frames).flatten() if frames else np.array([], dtype="float32")
-
 
 # --- ELIZA bot ---
 
@@ -764,7 +1064,6 @@ class Eliza:
         reflected = [self.reflections.get(w, w) for w in words]
         return " ".join(reflected)
 
-
 # ---------------------------------------------------------
 # Input/output helpers
 # ---------------------------------------------------------
@@ -796,7 +1095,6 @@ def get_user_input(active_language):
         return None
     return raw, raw.lower()
 
-
 # ---------------------------------------------------------
 # Main program loop
 # ---------------------------------------------------------
@@ -805,7 +1103,6 @@ def main():
     tts_prepare(en_voice="Zira", sv_voice="Bengt")  # Pick voices
 
     # GPU check for Whisper
-    import importlib
     torch_spec = importlib.util.find_spec("torch")
     use_gpu = False
     if torch_spec:
@@ -837,12 +1134,12 @@ def main():
     EEEEEEE        LLLLLLL      III         ZZZ            AAA   AAA
     EEEEEEE        LLLLLLL     IIIII       ZZZZZZZ         AAA   AAA
               
-    Your multilingual voice-enabled ELIZA chatbot! Hold "SPACE" to talk or just write :)
+    Your multilingual voice-enabled ELIZA chatbot!
+    Hold "SPACE" to talk or just write :)
     """)
     
         print(f"--- Session {session_number} ---")
         session_number += 1
-        print("Hello! Hold SPACE to talk or type to write. Say 'quit'/'slut' to exit.")
         active_language = "en"
         eliza_bot = Eliza(language=active_language)
 
@@ -850,11 +1147,61 @@ def main():
             user_data = get_user_input(active_language)
             if user_data is None:
                 continue
-            user_text_raw, user_text = user_data
+            user_text_raw, user_text = user_data  # user_text already lower-cased
 
-            # Exit check
-            words = re.findall(r"\b[\wåäö]+\b", user_text)
+            # 1) normalize slang/contractions first (if you added normalize_input)
+            try:
+                user_text = normalize_input(user_text)
+            except NameError:
+                pass  # ok if you haven't defined normalize_input
+
+            # 2) pick language once (prefer strong cues, else sticky)
+            lang_hint = detect_language_strong(user_text) or active_language
+
+            # 3) run exactly one spell path
+            if lang_hint == "sv":
+                user_text = correct_swedish_text(user_text)
+            else:
+                # pyspellchecker (token-wise to keep punctuation)
+                tokens = re.findall(r"\w+|[^\w\s]", user_text, flags=re.UNICODE)
+                words = [t for t in tokens if re.match(r"^\w+$", t, flags=re.UNICODE)]
+                unknown = spell_en.unknown(words)
+                fixed = []
+                wi = 0
+                for t in tokens:
+                    if re.match(r"^\w+$", t, flags=re.UNICODE):
+                        w = t
+                        fixed_word = spell_en.correction(w) if w in unknown else w
+                        fixed.append(fixed_word)
+                        wi += 1
+                    else:
+                        fixed.append(t)
+                # rejoin with spacing
+                user_text = "".join(
+                    ((" " if i and fixed[i-1].isalnum() and tok.isalnum() else "") + tok)
+                    for i, tok in enumerate(fixed)
+                )
+
+            # 4) lock language if it changed
+            if lang_hint != active_language:
+                active_language = lang_hint
+                eliza_bot.language = active_language
+
+            # Exit check (supports single words and multi-word phrases)
+            text_lc = user_text
+            words = re.findall(r"\b[\wåäö]+\b", text_lc)
             if any(w in QUIT_WORDS for w in words):
+                should_quit = True
+            else:
+                MULTI_QUITS = {
+                    "see you", "see ya", "catch you later", "so long",
+                    "good bye", "bye bye",
+                    "vi ses", "ha det", "ha det bra", "ta hand om dig",
+                    "på återseende", "sköt om dig", "slut på samtal"
+                }
+                should_quit = any(p in text_lc for p in MULTI_QUITS)
+
+            if should_quit:
                 farewells = FAREWELLS_SV if active_language == "sv" else FAREWELLS_EN
                 farewell = format_sentence(random.choice(farewells))
                 print(f"{Fore.CYAN}ELIZA: {farewell}{Style.RESET_ALL}")
@@ -863,18 +1210,23 @@ def main():
                 os.system("cls" if os.name == "nt" else "clear")
                 break
 
-            
-
-            # Switch language if strong cues
-            strong = detect_language_strong(user_text)
-            if strong and strong != active_language:
-                active_language = strong
-                eliza_bot.language = active_language
-
             # Respond via ELIZA
             reply = format_sentence(eliza_bot.respond(user_text))
-            print(f"{Fore.CYAN}[{active_language.upper()}] ELIZA: {reply}{Style.RESET_ALL}")
-            speak(reply, lang=active_language)
+
+            # show typos/disfluencies for human feel
+            shown_reply = humanize_text(
+                reply, lang=active_language,
+                typo_prob=0.22, max_typos=2,
+                filler_prob=0.18, style_prob=0.25
+            )
+            shown_reply = format_sentence(shown_reply)
+
+            print(f"{Fore.CYAN}[{active_language.upper()}] ELIZA: {shown_reply}{Style.RESET_ALL}")
+
+            # speak clean or messy? set this flag
+            TTS_KEEP_CLEAN = True
+            speak(reply if TTS_KEEP_CLEAN else shown_reply, lang=active_language)
+
 
 if __name__ == "__main__":
     main()
