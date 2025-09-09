@@ -61,7 +61,7 @@ A modern, voice-enabled implementation of the classic ELIZA psychotherapist chat
 
 4. **Run the chatbot**
    ```bash
-   python eliza_voice.py
+   python Eliza_Complicated.py
    ```
 
 
