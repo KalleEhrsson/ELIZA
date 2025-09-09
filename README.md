@@ -40,8 +40,22 @@ A modern, voice-enabled implementation of the classic ELIZA psychotherapist chat
    source eliza-env/bin/activate  # On Windows: eliza-env\Scripts\activate
    ```
 
+   ### Dependencies
+
+   Create a `requirements.txt` file in the repo root with:
+   ```txt
+   numpy>=1.21.0
+   sounddevice>=0.4.0
+   faster-whisper>=0.9.0
+   pynput>=1.7.0
+   pyttsx3>=2.90
+   torch>=1.9.0 # Optional: for GPU acceleration detection
+   colorama>=0.4.0
+   ```
+
 3. **Install dependencies**
    ```bash
+   pip install --upgrade pip
    pip install -r requirements.txt
    ```
 
@@ -50,17 +64,7 @@ A modern, voice-enabled implementation of the classic ELIZA psychotherapist chat
    python eliza_voice.py
    ```
 
-### Dependencies
 
-Create a `requirements.txt` file with:
-```txt
-numpy>=1.21.0
-sounddevice>=0.4.0
-faster-whisper>=0.9.0
-pynput>=1.7.0
-pyttsx3>=2.90
-torch>=1.9.0  # Optional: for GPU acceleration detection
-```
 
 ## 🎮 Usage Guide
 
