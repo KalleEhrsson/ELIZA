@@ -837,7 +837,7 @@ def main():
     EEEEEEE        LLLLLLL      III         ZZZ            AAA   AAA
     EEEEEEE        LLLLLLL     IIIII       ZZZZZZZ         AAA   AAA
               
-    Your friendly voice-enabled ELIZA chatbot!
+    Your multilingual voice-enabled ELIZA chatbot! Press "SPACE" to talk or just write :)
     """)
     
         print(f"--- Session {session_number} ---")
